@@ -4,6 +4,8 @@ import Foundation
 
 @MainActor
 final class ComputerControlService {
+    private var latestScreenFrameGeometry: ScreenFrameGeometry?
+
     var isAccessibilityTrusted: Bool {
         AXIsProcessTrusted()
     }
@@ -13,17 +15,49 @@ final class ComputerControlService {
         _ = AXIsProcessTrustedWithOptions(options)
     }
 
-    func moveMouse(x: Double, y: Double) -> ComputerControlResult {
-        guard ensureAccessibility() else { return accessibilityFailure() }
-        guard let point = pointFromNormalized(x: x, y: y) else {
-            return ComputerControlResult(ok: false, message: "Invalid mouse coordinates. Use x/y from 0.0 to 1.0.")
-        }
-        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
-            .post(tap: .cghidEventTap)
-        return ComputerControlResult(ok: true, message: "Mouse moved.", metadata: ["x": x, "y": y])
+    func updateLatestScreenFrameGeometry(_ geometry: ScreenFrameGeometry) {
+        latestScreenFrameGeometry = geometry
     }
 
-    func clickMouse(x: Double?, y: Double?, button: String, count: Int) -> ComputerControlResult {
+    func moveMouse(
+        x: Double?,
+        y: Double?,
+        coordinateSpace: String,
+        imageX: Double?,
+        imageY: Double?,
+        imageWidth: Double?,
+        imageHeight: Double?
+    ) -> ComputerControlResult {
+        guard ensureAccessibility() else { return accessibilityFailure() }
+        let resolution = resolvePoint(
+            x: x,
+            y: y,
+            coordinateSpace: coordinateSpace,
+            imageX: imageX,
+            imageY: imageY,
+            imageWidth: imageWidth,
+            imageHeight: imageHeight
+        )
+        guard resolution.result.ok else {
+            return resolution.result
+        }
+        let point = resolution.point
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
+            .post(tap: .cghidEventTap)
+        return ComputerControlResult(ok: true, message: "Mouse moved.", metadata: resolution.metadata)
+    }
+
+    func clickMouse(
+        x: Double?,
+        y: Double?,
+        coordinateSpace: String,
+        imageX: Double?,
+        imageY: Double?,
+        imageWidth: Double?,
+        imageHeight: Double?,
+        button: String,
+        count: Int
+    ) -> ComputerControlResult {
         guard ensureAccessibility() else { return accessibilityFailure() }
         let safeCount = max(1, min(count, 2))
         let normalizedButton = button.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -35,19 +69,33 @@ final class ComputerControlService {
         let upType: CGEventType = mouseButton == .right ? .rightMouseUp : .leftMouseUp
 
         let point: CGPoint
+        let hasRequestedPoint = x != nil || y != nil || !coordinateSpace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || imageX != nil || imageY != nil
+        var metadata: [String: Any] = ["button": normalizedButton.isEmpty ? "left" : normalizedButton, "count": safeCount]
         guard (x == nil && y == nil) || (x != nil && y != nil) else {
             return ComputerControlResult(ok: false, message: "Provide both x and y, or omit both to click the current cursor location.")
         }
-        if let x, let y {
-            guard let requestedPoint = pointFromNormalized(x: x, y: y) else {
-                return ComputerControlResult(ok: false, message: "Invalid click coordinates. Use x/y from 0.0 to 1.0.")
+        if hasRequestedPoint {
+            let resolution = resolvePoint(
+                x: x,
+                y: y,
+                coordinateSpace: coordinateSpace,
+                imageX: imageX,
+                imageY: imageY,
+                imageWidth: imageWidth,
+                imageHeight: imageHeight
+            )
+            guard resolution.result.ok else {
+                return resolution.result
             }
-            point = requestedPoint
+            point = resolution.point
+            metadata.merge(resolution.metadata) { _, new in new }
         } else {
             point = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
+            metadata["coordinate_space"] = "current_cursor"
+            metadata["resolved_point"] = ["x": point.x, "y": point.y]
         }
 
-        if x != nil, y != nil {
+        if hasRequestedPoint {
             CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: mouseButton)?
                 .post(tap: .cghidEventTap)
         }
@@ -57,7 +105,7 @@ final class ComputerControlService {
             CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: point, mouseButton: mouseButton)?
                 .post(tap: .cghidEventTap)
         }
-        return ComputerControlResult(ok: true, message: "Mouse click executed.", metadata: ["button": button, "count": safeCount])
+        return ComputerControlResult(ok: true, message: "Mouse click executed.", metadata: metadata)
     }
 
     func scrollMouse(deltaX: Double, deltaY: Double) -> ComputerControlResult {
@@ -139,10 +187,99 @@ final class ComputerControlService {
         )
     }
 
-    private func pointFromNormalized(x: Double, y: Double) -> CGPoint? {
-        guard (0...1).contains(x), (0...1).contains(y) else { return nil }
-        let bounds = CGDisplayBounds(CGMainDisplayID())
-        return CGPoint(x: bounds.minX + bounds.width * x, y: bounds.minY + bounds.height * y)
+    private func resolvePoint(
+        x: Double?,
+        y: Double?,
+        coordinateSpace: String,
+        imageX: Double?,
+        imageY: Double?,
+        imageWidth: Double?,
+        imageHeight: Double?
+    ) -> (point: CGPoint, metadata: [String: Any], result: ComputerControlResult) {
+        let normalizedSpace = coordinateSpace.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let inferredImagePixels = normalizedSpace == "image_pixels" || normalizedSpace == "image-pixels" || normalizedSpace == "image"
+        if inferredImagePixels {
+            return pointFromImagePixels(
+                imageX: imageX ?? x,
+                imageY: imageY ?? y,
+                imageWidth: imageWidth,
+                imageHeight: imageHeight
+            )
+        }
+
+        guard let x, let y else {
+            return failure("x and y are required for normalized mouse coordinates.")
+        }
+        guard (0...1).contains(x), (0...1).contains(y) else {
+            return failure("Invalid normalized mouse coordinates. Use x/y from 0.0 to 1.0, or set coordinate_space to image_pixels with image_x/image_y.")
+        }
+
+        let geometry = latestScreenFrameGeometry ?? fallbackGeometry()
+        let bounds = geometry.logicalBounds
+        let point = CGPoint(x: bounds.minX + bounds.width * x, y: bounds.minY + bounds.height * y)
+        var metadata = geometry.toolMetadata
+        metadata["coordinate_space"] = "normalized"
+        metadata["input"] = ["x": x, "y": y]
+        metadata["resolved_point"] = ["x": point.x, "y": point.y]
+        return (point, metadata, ComputerControlResult(ok: true, message: "Resolved point."))
+    }
+
+    private func pointFromImagePixels(
+        imageX: Double?,
+        imageY: Double?,
+        imageWidth: Double?,
+        imageHeight: Double?
+    ) -> (point: CGPoint, metadata: [String: Any], result: ComputerControlResult) {
+        guard let geometry = latestScreenFrameGeometry else {
+            return failure("No Live screen frame geometry is available yet. Share screen first, then use image_pixels coordinates.")
+        }
+        guard let imageX, let imageY else {
+            return failure("image_x and image_y are required when coordinate_space is image_pixels.")
+        }
+
+        let width = imageWidth ?? Double(geometry.sentImageWidth)
+        let height = imageHeight ?? Double(geometry.sentImageHeight)
+        guard width > 0, height > 0 else {
+            return failure("image_width and image_height must be greater than zero.")
+        }
+
+        let bounds = geometry.logicalBounds
+        let point = CGPoint(
+            x: bounds.minX + imageX * bounds.width / width,
+            y: bounds.minY + imageY * bounds.height / height
+        )
+        var metadata = geometry.toolMetadata
+        metadata["coordinate_space"] = "image_pixels"
+        metadata["input"] = [
+            "image_x": imageX,
+            "image_y": imageY,
+            "image_width": width,
+            "image_height": height
+        ]
+        metadata["resolved_point"] = ["x": point.x, "y": point.y]
+        return (point, metadata, ComputerControlResult(ok: true, message: "Resolved point."))
+    }
+
+    private func fallbackGeometry() -> ScreenFrameGeometry {
+        let displayID = CGMainDisplayID()
+        let bounds = CGDisplayBounds(displayID)
+        let screen = NSScreen.screens.first { screen in
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            return number?.uint32Value == displayID
+        } ?? NSScreen.main
+        return ScreenFrameGeometry(
+            displayID: displayID,
+            capturePixelWidth: Int(bounds.width),
+            capturePixelHeight: Int(bounds.height),
+            sentImageWidth: Int(bounds.width),
+            sentImageHeight: Int(bounds.height),
+            logicalBounds: bounds,
+            backingScaleFactor: Double(screen?.backingScaleFactor ?? 1)
+        )
+    }
+
+    private func failure(_ message: String) -> (point: CGPoint, metadata: [String: Any], result: ComputerControlResult) {
+        (.zero, [:], ComputerControlResult(ok: false, message: message))
     }
 
     private func shouldPaste(_ text: String) -> Bool {

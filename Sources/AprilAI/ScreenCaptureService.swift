@@ -10,21 +10,34 @@ enum ScreenCaptureService {
     }
 
     static func captureMainDisplayJPEG(maxDimension: Int = 1280, compression: Double = 0.72) async throws -> Data {
-        let cgImage = try await captureMainDisplayCGImage()
-        let resized = resizeIfNeeded(cgImage, maxDimension: maxDimension) ?? cgImage
-        return try jpegData(from: resized, compression: compression)
+        try await captureMainDisplayJPEGFrame(maxDimension: maxDimension, compression: compression).data
     }
 
-    private static func captureMainDisplayCGImage() async throws -> CGImage {
+    static func captureMainDisplayJPEGFrame(maxDimension: Int = 1280, compression: Double = 0.72) async throws -> ScreenFrame {
+        let displayID = CGMainDisplayID()
+        let cgImage = try await captureMainDisplayCGImage(displayID: displayID)
+        let sentImage = resizeIfNeeded(cgImage, maxDimension: maxDimension) ?? cgImage
+        let data = try jpegData(from: sentImage, compression: compression)
+        let geometry = mainDisplayGeometry(
+            displayID: displayID,
+            capturePixelWidth: cgImage.width,
+            capturePixelHeight: cgImage.height,
+            sentImageWidth: sentImage.width,
+            sentImageHeight: sentImage.height
+        )
+        return ScreenFrame(data: data, geometry: geometry)
+    }
+
+    private static func captureMainDisplayCGImage(displayID: CGDirectDisplayID = CGMainDisplayID()) async throws -> CGImage {
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
             throw CaptureError.permissionDenied
         }
 
-        if #available(macOS 14.0, *), let cgImage = try? await captureWithScreenCaptureKit() {
+        if #available(macOS 14.0, *), let cgImage = try? await captureWithScreenCaptureKit(displayID: displayID) {
             return cgImage
         }
 
-        guard let cgImage = CGDisplayCreateImage(CGMainDisplayID()) else {
+        guard let cgImage = CGDisplayCreateImage(displayID) else {
             throw CaptureError.failedAfterPermission
         }
 
@@ -48,10 +61,9 @@ enum ScreenCaptureService {
     }
 
     @available(macOS 14.0, *)
-    private static func captureWithScreenCaptureKit() async throws -> CGImage {
+    private static func captureWithScreenCaptureKit(displayID: CGDirectDisplayID) async throws -> CGImage {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        let mainDisplayID = CGMainDisplayID()
-        guard let display = content.displays.first(where: { $0.displayID == mainDisplayID }) ?? content.displays.first else {
+        guard let display = content.displays.first(where: { $0.displayID == displayID }) ?? content.displays.first else {
             throw CaptureError.noDisplay
         }
 
@@ -62,6 +74,30 @@ enum ScreenCaptureService {
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+    }
+
+    private static func mainDisplayGeometry(
+        displayID: CGDirectDisplayID,
+        capturePixelWidth: Int,
+        capturePixelHeight: Int,
+        sentImageWidth: Int,
+        sentImageHeight: Int
+    ) -> ScreenFrameGeometry {
+        let logicalBounds = CGDisplayBounds(displayID)
+        let screen = NSScreen.screens.first { screen in
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            return number?.uint32Value == displayID
+        } ?? NSScreen.main
+
+        return ScreenFrameGeometry(
+            displayID: displayID,
+            capturePixelWidth: capturePixelWidth,
+            capturePixelHeight: capturePixelHeight,
+            sentImageWidth: sentImageWidth,
+            sentImageHeight: sentImageHeight,
+            logicalBounds: logicalBounds,
+            backingScaleFactor: Double(screen?.backingScaleFactor ?? 1)
+        )
     }
 
     private static func resizeIfNeeded(_ cgImage: CGImage, maxDimension: Int) -> CGImage? {

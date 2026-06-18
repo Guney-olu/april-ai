@@ -174,7 +174,7 @@ struct SettingsView: View {
                             .foregroundStyle(state.accessibilityTrusted ? .green : .orange)
                         }
 
-                        Text("April AI can use Live tools for app opening, mouse movement, clicks, scrolling, typing, and a small key allowlist. Local-control tools execute without an extra approval dialog once the required macOS permission is active.")
+                        Text("April AI can use Live tools for native app Accessibility control, app opening, mouse movement, clicks, scrolling, typing, and a small key allowlist. Local-control tools execute without an extra approval dialog once the required macOS permission is active.")
                             .foregroundStyle(.secondary)
 
                         Text("It still cannot delete files, run shell commands, send messages, buy things, schedule events, type secrets, or complete irreversible workflows for you.")

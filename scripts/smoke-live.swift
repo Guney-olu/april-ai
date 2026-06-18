@@ -266,14 +266,18 @@ let toolDeclarations: [[String: Any]] = [
     ],
     [
         "name": "move_mouse",
-        "description": "Move the mouse to normalized main-display coordinates after Accessibility permission.",
+        "description": "Move the mouse using normalized coordinates or latest Live image pixels.",
         "parameters": [
             "type": "object",
             "properties": [
+                "coordinate_space": ["type": "string"],
                 "x": ["type": "number"],
-                "y": ["type": "number"]
-            ],
-            "required": ["x", "y"]
+                "y": ["type": "number"],
+                "image_x": ["type": "number"],
+                "image_y": ["type": "number"],
+                "image_width": ["type": "number"],
+                "image_height": ["type": "number"]
+            ]
         ]
     ],
     [
@@ -282,8 +286,13 @@ let toolDeclarations: [[String: Any]] = [
         "parameters": [
             "type": "object",
             "properties": [
+                "coordinate_space": ["type": "string"],
                 "x": ["type": "number"],
                 "y": ["type": "number"],
+                "image_x": ["type": "number"],
+                "image_y": ["type": "number"],
+                "image_width": ["type": "number"],
+                "image_height": ["type": "number"],
                 "button": ["type": "string"],
                 "count": ["type": "integer"]
             ]
@@ -333,6 +342,50 @@ let toolDeclarations: [[String: Any]] = [
                 "app": ["type": "string"]
             ],
             "required": ["app"]
+        ]
+    ],
+    [
+        "name": "ax_snapshot",
+        "description": "Snapshot native macOS Accessibility elements.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "app": ["type": "string"]
+            ]
+        ]
+    ],
+    [
+        "name": "ax_press",
+        "description": "Press an Accessibility element by id.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "element_id": ["type": "string"]
+            ],
+            "required": ["element_id"]
+        ]
+    ],
+    [
+        "name": "ax_set_value",
+        "description": "Set an Accessibility element value by id.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "element_id": ["type": "string"],
+                "value": ["type": "string"]
+            ],
+            "required": ["element_id", "value"]
+        ]
+    ],
+    [
+        "name": "ax_focus",
+        "description": "Focus an Accessibility element by id.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "element_id": ["type": "string"]
+            ],
+            "required": ["element_id"]
         ]
     ]
 ]

@@ -4,6 +4,7 @@ import Foundation
 final class LiveToolExecutor {
     private let context: ContextLibrary
     private let computerControl: ComputerControlService
+    private let accessibilityControl: AccessibilityControlService
     private let gemini: () -> GeminiClient
     private let settings: () -> AppSettings
     private let onMemoryChanged: () async -> Void
@@ -11,12 +12,14 @@ final class LiveToolExecutor {
     init(
         context: ContextLibrary,
         computerControl: ComputerControlService,
+        accessibilityControl: AccessibilityControlService,
         gemini: @escaping () -> GeminiClient,
         settings: @escaping () -> AppSettings,
         onMemoryChanged: @escaping () async -> Void
     ) {
         self.context = context
         self.computerControl = computerControl
+        self.accessibilityControl = accessibilityControl
         self.gemini = gemini
         self.settings = settings
         self.onMemoryChanged = onMemoryChanged
@@ -108,10 +111,14 @@ final class LiveToolExecutor {
             "parameters": [
                 "type": "object",
                 "properties": [
-                    "x": ["type": "number", "description": "Horizontal coordinate from 0.0 left to 1.0 right."],
-                    "y": ["type": "number", "description": "Vertical coordinate from 0.0 top to 1.0 bottom."]
-                ],
-                "required": ["x", "y"]
+                    "coordinate_space": ["type": "string", "description": "Use normalized for x/y 0.0...1.0, or image_pixels for image_x/image_y from the latest Live screen frame."],
+                    "x": ["type": "number", "description": "Horizontal normalized coordinate from 0.0 left to 1.0 right. Only use for normalized coordinates."],
+                    "y": ["type": "number", "description": "Vertical normalized coordinate from 0.0 top to 1.0 bottom. Only use for normalized coordinates."],
+                    "image_x": ["type": "number", "description": "Horizontal pixel coordinate in the latest Live screen image."],
+                    "image_y": ["type": "number", "description": "Vertical pixel coordinate in the latest Live screen image."],
+                    "image_width": ["type": "number", "description": "Optional width of the image coordinate space if known."],
+                    "image_height": ["type": "number", "description": "Optional height of the image coordinate space if known."]
+                ]
             ]
         ],
         [
@@ -120,8 +127,13 @@ final class LiveToolExecutor {
             "parameters": [
                 "type": "object",
                 "properties": [
-                    "x": ["type": "number", "description": "Optional horizontal coordinate from 0.0 to 1.0."],
-                    "y": ["type": "number", "description": "Optional vertical coordinate from 0.0 to 1.0."],
+                    "coordinate_space": ["type": "string", "description": "Use normalized for x/y 0.0...1.0, image_pixels for image_x/image_y from the latest Live screen frame, or omit coordinates to click current cursor location."],
+                    "x": ["type": "number", "description": "Optional horizontal normalized coordinate from 0.0 to 1.0."],
+                    "y": ["type": "number", "description": "Optional vertical normalized coordinate from 0.0 to 1.0."],
+                    "image_x": ["type": "number", "description": "Optional horizontal pixel coordinate in the latest Live screen image."],
+                    "image_y": ["type": "number", "description": "Optional vertical pixel coordinate in the latest Live screen image."],
+                    "image_width": ["type": "number", "description": "Optional width of the image coordinate space if known."],
+                    "image_height": ["type": "number", "description": "Optional height of the image coordinate space if known."],
                     "button": ["type": "string", "description": "left or right."],
                     "count": ["type": "integer", "description": "1 for click, 2 for double-click."]
                 ]
@@ -172,6 +184,50 @@ final class LiveToolExecutor {
                 ],
                 "required": ["app"]
             ]
+        ],
+        [
+            "name": "ax_snapshot",
+            "description": "Snapshot the frontmost or named native macOS app Accessibility tree. Use this before AX press/set/focus so native apps can be controlled without moving the cursor.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "app": ["type": "string", "description": "Optional app name or bundle id. Omit for the frontmost app."]
+                ]
+            ]
+        ],
+        [
+            "name": "ax_press",
+            "description": "Perform AXPress on an element id from the latest ax_snapshot without moving the cursor.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "element_id": ["type": "string", "description": "Element id from ax_snapshot, such as ax_12."]
+                ],
+                "required": ["element_id"]
+            ]
+        ],
+        [
+            "name": "ax_set_value",
+            "description": "Set AXValue on an element id from the latest ax_snapshot without moving the cursor. Do not use for secrets, passwords, or payment data.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "element_id": ["type": "string", "description": "Element id from ax_snapshot, such as ax_12."],
+                    "value": ["type": "string", "description": "Text or value to set."]
+                ],
+                "required": ["element_id", "value"]
+            ]
+        ],
+        [
+            "name": "ax_focus",
+            "description": "Focus an element id from the latest ax_snapshot without moving the cursor.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "element_id": ["type": "string", "description": "Element id from ax_snapshot, such as ax_12."]
+                ],
+                "required": ["element_id"]
+            ]
         ]
     ]
 
@@ -189,13 +245,23 @@ final class LiveToolExecutor {
                     response = try await googleSearch(args: call.args)
                 case "move_mouse":
                     response = computerControl.moveMouse(
-                        x: doubleArg("x", in: call.args) ?? -1,
-                        y: doubleArg("y", in: call.args) ?? -1
+                        x: doubleArg("x", in: call.args),
+                        y: doubleArg("y", in: call.args),
+                        coordinateSpace: stringArg("coordinate_space", in: call.args),
+                        imageX: doubleArg("image_x", in: call.args),
+                        imageY: doubleArg("image_y", in: call.args),
+                        imageWidth: doubleArg("image_width", in: call.args),
+                        imageHeight: doubleArg("image_height", in: call.args)
                     ).toolResponse
                 case "click_mouse":
                     response = computerControl.clickMouse(
                         x: doubleArg("x", in: call.args),
                         y: doubleArg("y", in: call.args),
+                        coordinateSpace: stringArg("coordinate_space", in: call.args),
+                        imageX: doubleArg("image_x", in: call.args),
+                        imageY: doubleArg("image_y", in: call.args),
+                        imageWidth: doubleArg("image_width", in: call.args),
+                        imageHeight: doubleArg("image_height", in: call.args),
                         button: stringArg("button", in: call.args).isEmpty ? "left" : stringArg("button", in: call.args),
                         count: intArg("count", in: call.args) ?? 1
                     ).toolResponse
@@ -205,7 +271,7 @@ final class LiveToolExecutor {
                         deltaY: doubleArg("delta_y", in: call.args) ?? 0
                     ).toolResponse
                 case "type_text":
-                    response = await computerControl.typeText(stringArg("text", in: call.args)).toolResponse
+                    response = await computerControl.typeText(rawStringArg("text", in: call.args)).toolResponse
                 case "press_key":
                     response = computerControl.pressKey(
                         stringArg("key", in: call.args),
@@ -213,6 +279,17 @@ final class LiveToolExecutor {
                     ).toolResponse
                 case "open_application":
                     response = computerControl.openApplication(stringArg("app", in: call.args)).toolResponse
+                case "ax_snapshot":
+                    response = accessibilityControl.snapshot(app: stringArg("app", in: call.args)).toolResponse
+                case "ax_press":
+                    response = accessibilityControl.press(elementID: stringArg("element_id", in: call.args)).toolResponse
+                case "ax_set_value":
+                    response = accessibilityControl.setValue(
+                        elementID: stringArg("element_id", in: call.args),
+                        value: rawStringArg("value", in: call.args)
+                    ).toolResponse
+                case "ax_focus":
+                    response = accessibilityControl.focus(elementID: stringArg("element_id", in: call.args)).toolResponse
                 default:
                     response = [
                         "ok": false,
@@ -377,6 +454,16 @@ final class LiveToolExecutor {
     private func stringArg(_ key: String, in args: [String: Any]) -> String {
         if let value = args[key] as? String {
             return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let value = args[key] as? NSNumber {
+            return value.stringValue
+        }
+        return ""
+    }
+
+    private func rawStringArg(_ key: String, in args: [String: Any]) -> String {
+        if let value = args[key] as? String {
+            return value
         }
         if let value = args[key] as? NSNumber {
             return value.stringValue

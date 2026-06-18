@@ -59,13 +59,13 @@ You can choose another folder from the **Context** or **Settings** screen.
 - Gemini Live WebSocket session using the saved Live model for lower-latency talk.
 - Fast text model option `gemini-3.1-flash-lite` in Settings.
 - Two-part assistant replies: a short spoken response and a full Markdown answer in chat.
-- Scoped local-control boundary with Accessibility-gated mouse and keyboard tools.
+- Scoped local-control boundary with Accessibility-gated native app, mouse, and keyboard tools.
 - On-demand main-display screenshot capture.
 - Push-to-talk style voice clip recording.
 - Live mic streaming from the Talk button, with returned audio chunks played as they arrive.
 - Live screen sharing sends low-resolution JPEG frames into the active Gemini Live session.
 - Live sessions enable context-window compression and session resumption hints to reduce abrupt audio-video session termination.
-- Live custom tools for approved memory search, guarded memory saving, custom Google Search grounding, app opening, mouse movement/click/scroll, text typing, and limited key presses.
+- Live custom tools for approved memory search, guarded memory saving, custom Google Search grounding, native app AX control, app opening, mouse movement/click/scroll, text typing, and limited key presses.
 - Local playback of Gemini-generated speech audio for short replies.
 - Local `context/` folder structure:
   - `inbox/`
@@ -79,11 +79,12 @@ You can choose another folder from the **Context** or **Settings** screen.
 
 ## Local Control
 
-April AI can request local control through Live function tools. Mouse and keyboard tools require macOS Accessibility permission, shown in **Settings**. Local-control tools execute without an extra approval dialog once the relevant macOS permission is active.
+April AI can request local control through Live function tools. Native app AX control, mouse, and keyboard tools require macOS Accessibility permission, shown in **Settings**. Local-control tools execute without an extra approval dialog once the relevant macOS permission is active.
 
 Allowed local actions:
 
 - Open an installed app by exact app name or bundle id.
+- Snapshot native macOS app Accessibility trees, press exposed controls, focus elements, and set values without moving the cursor.
 - Move, click, double-click, right-click, and scroll the mouse.
 - Type text into the focused field.
 - Press a limited key allowlist: return, tab, escape, delete, arrow keys, and cmd+l.

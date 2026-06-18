@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
@@ -236,6 +237,42 @@ struct ComputerControlResult {
         }
         return response
     }
+}
+
+struct ScreenFrameGeometry: Equatable {
+    let displayID: UInt32
+    let capturePixelWidth: Int
+    let capturePixelHeight: Int
+    let sentImageWidth: Int
+    let sentImageHeight: Int
+    let logicalBounds: CGRect
+    let backingScaleFactor: Double
+
+    var toolMetadata: [String: Any] {
+        [
+            "display_id": displayID,
+            "capture_pixels": [
+                "width": capturePixelWidth,
+                "height": capturePixelHeight
+            ],
+            "sent_image_pixels": [
+                "width": sentImageWidth,
+                "height": sentImageHeight
+            ],
+            "logical_bounds": [
+                "x": logicalBounds.origin.x,
+                "y": logicalBounds.origin.y,
+                "width": logicalBounds.width,
+                "height": logicalBounds.height
+            ],
+            "backing_scale_factor": backingScaleFactor
+        ]
+    }
+}
+
+struct ScreenFrame {
+    let data: Data
+    let geometry: ScreenFrameGeometry
 }
 
 struct AppSettings: Codable, Equatable {

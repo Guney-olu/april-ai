@@ -30,6 +30,7 @@ final class AppState: ObservableObject {
     let voiceRecorder = VoiceRecorder()
     let liveSession = GeminiLiveSession()
     let computerControl = ComputerControlService()
+    let accessibilityControl = AccessibilityControlService()
 
     private let keychain = KeychainStore()
     private var liveToolExecutor: LiveToolExecutor!
@@ -57,6 +58,7 @@ final class AppState: ObservableObject {
         liveToolExecutor = LiveToolExecutor(
             context: context,
             computerControl: computerControl,
+            accessibilityControl: accessibilityControl,
             gemini: { [weak self] in
                 guard let self else {
                     return GeminiClient(apiKey: "", model: AppSettings.defaultTextModel)
@@ -312,7 +314,7 @@ final class AppState: ObservableObject {
                 let audio = try self.voiceRecorder.stop()
                 let prompt = """
                 The attached audio is the user's spoken request. Transcribe it mentally, answer it, and challenge weak reasoning.
-                If the user asked for local control, explain that control is available only through confirmed Live tools; otherwise provide a draft or checklist.
+                If the user asked for local control, explain that control is available through scoped Live tools; otherwise provide a draft or checklist.
                 Return strict JSON only:
                 {
                   "speakable": "A maximum two-sentence spoken response. Keep it simple and useful.",
@@ -649,8 +651,9 @@ final class AppState: ObservableObject {
                     try? await refreshLiveMemoryContext(silent: true)
                 }
 
-                let frame = try await ScreenCaptureService.captureMainDisplayJPEG(maxDimension: 1280, compression: 0.72)
-                try await liveSession.sendVideoFrame(frame, mimeType: "image/jpeg")
+                let frame = try await ScreenCaptureService.captureMainDisplayJPEGFrame(maxDimension: 1280, compression: 0.72)
+                computerControl.updateLatestScreenFrameGeometry(frame.geometry)
+                try await liveSession.sendVideoFrame(frame.data, mimeType: "image/jpeg")
                 consecutiveFailures = 0
                 if !liveSession.isConnected {
                     break
