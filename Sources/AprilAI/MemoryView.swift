@@ -23,7 +23,7 @@ struct MemoryView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(state.liveSession.isConnected ? "Live can use approved memory context." : "Live memory loads when a Live session connects.")
                         .foregroundStyle(.secondary)
-                    Text("Use refresh after saving or deleting memories during an active Live session.")
+                    Text("Live memory refreshes automatically after auto-save, manual save, or delete.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -46,7 +46,7 @@ struct MemoryView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Memory")
                 .font(.title2.weight(.bold))
-            Text("Review-first memory. The assistant can draft memories from this session, but durable memory is saved only when you approve it.")
+            Text("Auto-save memory is on. April AI saves useful session memories locally, then you prune the dumb ones with the trash button.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -75,13 +75,13 @@ struct MemoryView: View {
     }
 
     private var sessionReview: some View {
-        GroupBox("Session Review") {
+        GroupBox("Session Memory") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Button {
                         state.reviewSessionMemory()
                     } label: {
-                        Label("Review Session Memory", systemImage: "text.badge.checkmark")
+                        Label("Draft From Session", systemImage: "text.badge.checkmark")
                     }
                     .buttonStyle(.borderedProminent)
 

@@ -189,6 +189,10 @@ let setup: [String: Any] = [
             "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
             "turnCoverage": "TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO"
         ],
+        "contextWindowCompression": [
+            "slidingWindow": [:]
+        ],
+        "sessionResumption": [:],
         "inputAudioTranscription": [:],
         "outputAudioTranscription": [:]
     ]

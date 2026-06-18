@@ -31,7 +31,10 @@ final class AppState: ObservableObject {
 
     private let keychain = KeychainStore()
     private var liveScreenShareTask: Task<Void, Never>?
+    private var autoMemoryTask: Task<Void, Never>?
     private var sessionTurns: [SessionTurn] = []
+    private var lastAutoMemoryTurnCount = 0
+    private var isAutoSavingMemory = false
 
     init() {
         let loadedSettings = AppSettings.load()
@@ -575,7 +578,13 @@ final class AppState: ObservableObject {
         guard !trimmed.isEmpty else { return }
         sessionTurns.append(SessionTurn(role: role, content: trimmed, createdAt: Date()))
         if sessionTurns.count > 80 {
-            sessionTurns.removeFirst(sessionTurns.count - 80)
+            let overflow = sessionTurns.count - 80
+            sessionTurns.removeFirst(overflow)
+            lastAutoMemoryTurnCount = max(0, lastAutoMemoryTurnCount - overflow)
+        }
+
+        if role == .assistant {
+            scheduleAutoMemoryExtraction()
         }
     }
 
@@ -590,20 +599,36 @@ final class AppState: ObservableObject {
     }
 
     private func runLiveScreenShareLoop() async {
+        var consecutiveFailures = 0
+
         while !Task.isCancelled {
             do {
+                if !liveSession.isConnected {
+                    await connectLiveIfNeeded()
+                    guard liveSession.isConnected else {
+                        throw GeminiError.badResponse("Live screen sharing stopped because Live could not reconnect.")
+                    }
+                    try? await refreshLiveMemoryContext(silent: true)
+                }
+
                 let frame = try await ScreenCaptureService.captureMainDisplayJPEG(maxDimension: 1280, compression: 0.72)
                 try await liveSession.sendVideoFrame(frame, mimeType: "image/jpeg")
+                consecutiveFailures = 0
                 if !liveSession.isConnected {
                     break
                 }
             } catch is CancellationError {
                 break
             } catch {
-                messages.append(ChatMessage(role: .system, content: error.localizedDescription))
-                stopLiveScreenShare(notify: false)
-                status = error.localizedDescription
-                break
+                consecutiveFailures += 1
+                status = "Live screen frame failed (\(consecutiveFailures)/3): \(error.localizedDescription)"
+
+                if consecutiveFailures >= 3 {
+                    messages.append(ChatMessage(role: .system, content: error.localizedDescription))
+                    stopLiveScreenShare(notify: false)
+                    status = error.localizedDescription
+                    break
+                }
             }
 
             do {
@@ -612,6 +637,110 @@ final class AppState: ObservableObject {
                 break
             }
         }
+    }
+
+    private func scheduleAutoMemoryExtraction() {
+        guard !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard sessionTurns.count - lastAutoMemoryTurnCount >= 4 else { return }
+
+        autoMemoryTask?.cancel()
+        autoMemoryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 8_000_000_000)
+            } catch {
+                return
+            }
+            await self?.autoSaveSessionMemoryIfNeeded()
+        }
+    }
+
+    private func autoSaveSessionMemoryIfNeeded() async {
+        guard !isAutoSavingMemory else { return }
+        guard !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let currentTurnCount = sessionTurns.count
+        guard currentTurnCount - lastAutoMemoryTurnCount >= 4 else { return }
+
+        let transcript = sessionTurns
+            .suffix(24)
+            .map { turn in
+                let role = turn.role == .user ? "User" : "Assistant"
+                return "\(role): \(turn.content)"
+            }
+            .joined(separator: "\n\n")
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        isAutoSavingMemory = true
+        defer { isAutoSavingMemory = false }
+
+        do {
+            let raw = try await gemini().generateText(
+                system: Prompts.system,
+                prompt: Prompts.sessionMemoryAutoSave(transcript: transcript)
+            )
+            let review = try SessionMemoryReview.parse(raw)
+            let candidates = uniqueAutoMemoryCandidates(from: review.candidates)
+
+            guard !candidates.isEmpty else {
+                lastAutoMemoryTurnCount = currentTurnCount
+                status = "Auto memory checked; nothing durable to save."
+                return
+            }
+
+            var embeddings: [UUID: [Float]] = [:]
+            for candidate in candidates {
+                if let embedding = try? await embeddingForMemory(
+                    content: candidate.content,
+                    title: "\(candidate.type.label) memory"
+                ) {
+                    embeddings[candidate.id] = embedding
+                }
+            }
+
+            try context.saveReviewedMemories(
+                candidates: candidates,
+                sessionTitle: review.title.isEmpty ? "Auto memory" : review.title,
+                sessionSummary: review.summary,
+                embeddings: embeddings,
+                embeddingModel: settings.embeddingModel,
+                dimensions: settings.embeddingDimensions
+            )
+
+            lastAutoMemoryTurnCount = currentTurnCount
+            let refreshedLive = await refreshLiveMemoryAfterMemoryChange()
+            status = refreshedLive
+                ? "Auto-saved \(candidates.count) memor\(candidates.count == 1 ? "y" : "ies"). Live memory refreshed."
+                : "Auto-saved \(candidates.count) memor\(candidates.count == 1 ? "y" : "ies")."
+        } catch {
+            messages.append(ChatMessage(role: .system, content: "Auto memory failed: \(error.localizedDescription)"))
+            status = "Auto memory failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func uniqueAutoMemoryCandidates(from candidates: [MemoryCandidate]) -> [MemoryCandidate] {
+        var seen = Set(context.memories.map { normalizedMemoryText($0.content) })
+        return candidates.compactMap { candidate in
+            let content = candidate.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+            guard candidate.sensitivity.lowercased() != "high" else { return nil }
+
+            let normalized = normalizedMemoryText(content)
+            guard !normalized.isEmpty, !seen.contains(normalized) else { return nil }
+            seen.insert(normalized)
+
+            var cleaned = candidate
+            cleaned.content = content
+            cleaned.summary = cleaned.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            cleaned.isSelected = true
+            return cleaned
+        }
+    }
+
+    private func normalizedMemoryText(_ text: String) -> String {
+        text
+            .lowercased()
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func stopLiveScreenShare(notify: Bool = true) {

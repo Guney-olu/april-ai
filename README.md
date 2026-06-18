@@ -62,6 +62,8 @@ You can choose another folder from the **Context** or **Settings** screen.
 - On-demand main-display screenshot capture.
 - Push-to-talk style voice clip recording.
 - Live mic streaming from the Talk button, with returned audio chunks played as they arrive.
+- Live screen sharing sends low-resolution JPEG frames into the active Gemini Live session.
+- Live sessions enable context-window compression and session resumption hints to reduce abrupt audio-video session termination.
 - Local playback of Gemini-generated speech audio for short replies.
 - Local `context/` folder structure:
   - `inbox/`
@@ -70,7 +72,7 @@ You can choose another folder from the **Context** or **Settings** screen.
   - `index/`
 - PDF and text extraction from `context/inbox`.
 - SQLite FTS5 local search index.
-- Explicit memory saving only.
+- Automatic local session memory saving, plus manual memory saving and delete controls.
 - Research reports saved to `context/research`.
 
 ## Read-Only Boundary
@@ -79,9 +81,15 @@ The app does not expose tools for clicking, typing, deleting, sending, buying, s
 
 ## Live Talk
 
-The **Talk** button opens a persistent Gemini Live WebSocket session the first time you use it. Press **Talk** to stream mic audio; press **Stop** to pause the mic while keeping the Live session open. Use **Disconnect live** from the full chat view or **Close** from the menu bar popover when you want to close the socket.
+The **Talk** button opens a persistent Gemini Live WebSocket session the first time you use it. Press **Talk** to stream mic audio; press **Stop** to pause the mic while keeping the Live session open. Use **Share screen** to stream screen frames into that same Live session. Use **Disconnect live** from the full chat view or **Close** from the menu bar popover when you want to close the socket.
 
 The Live mic path keeps CoreAudio's realtime callback away from SwiftUI/MainActor state. If macOS has microphone permission enabled, the app should not close when starting the mic.
+
+Gemini Live audio-video sessions can be shorter than audio-only sessions. April AI enables context-window compression, listens for Live session rotation signals, and retries transient screen-frame failures so screen sharing does not immediately kill the conversation.
+
+## Memory
+
+April AI automatically reviews recent chat/live turns, saves useful durable memories locally, embeds them when the Gemini API key is available, and refreshes Live memory context when Live is connected. It still avoids obvious secrets and high-sensitivity candidates. Delete bad memories from the **Memory** tab using the trash button.
 
 ## Current V1 Notes
 

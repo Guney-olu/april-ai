@@ -27,6 +27,8 @@ final class GeminiLiveSession: ObservableObject {
     private var setupContinuation: CheckedContinuation<Void, Error>?
     private var outputSuppressionActive = false
     private var shouldResumeMicAfterOutput = false
+    private var sessionResumptionHandle = ""
+    private var lastMemoryContext = ""
 
     func connect(apiKey: String, model: String, voice: String, systemInstruction: String) async throws {
         if isConnected, didSendSetup {
@@ -76,38 +78,43 @@ final class GeminiLiveSession: ObservableObject {
         receiveLoop()
 
         onStatus?("Live socket open. Sending setup...")
-        let setupMessage: [String: Any] = [
-            "setup": [
-                "model": "models/\(self.model)",
-                "generationConfig": [
-                    "responseModalities": ["AUDIO"],
-                    "mediaResolution": "MEDIA_RESOLUTION_LOW",
-                    "speechConfig": [
-                        "voiceConfig": [
-                            "prebuiltVoiceConfig": [
-                                "voiceName": self.voice
-                            ]
+        let setupConfig: [String: Any] = [
+            "model": "models/\(self.model)",
+            "generationConfig": [
+                "responseModalities": ["AUDIO"],
+                "mediaResolution": "MEDIA_RESOLUTION_LOW",
+                "speechConfig": [
+                    "voiceConfig": [
+                        "prebuiltVoiceConfig": [
+                            "voiceName": self.voice
                         ]
                     ]
+                ]
+            ],
+            "systemInstruction": [
+                "parts": [["text": systemInstruction]]
+            ],
+            "realtimeInputConfig": [
+                "automaticActivityDetection": [
+                    "disabled": false,
+                    "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
+                    "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
+                    "prefixPaddingMs": 40,
+                    "silenceDurationMs": 600
                 ],
-                "systemInstruction": [
-                    "parts": [["text": systemInstruction]]
-                ],
-                "realtimeInputConfig": [
-                    "automaticActivityDetection": [
-                        "disabled": false,
-                        "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
-                        "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
-                        "prefixPaddingMs": 40,
-                        "silenceDurationMs": 600
-                    ],
-                    "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
-                    "turnCoverage": "TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO"
-                ],
-                "inputAudioTranscription": [:],
-                "outputAudioTranscription": [:]
-            ]
+                "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
+                "turnCoverage": "TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO"
+            ],
+            "contextWindowCompression": [
+                "slidingWindow": [:]
+            ],
+            "sessionResumption": sessionResumptionHandle.isEmpty
+                ? [:]
+                : ["handle": sessionResumptionHandle],
+            "inputAudioTranscription": [:],
+            "outputAudioTranscription": [:]
         ]
+        let setupMessage: [String: Any] = ["setup": setupConfig]
 
         try await waitForSetupComplete {
             try await self.sendJSON(setupMessage)
@@ -126,6 +133,7 @@ final class GeminiLiveSession: ObservableObject {
         audioSender.reset()
         isConnected = false
         didSendSetup = false
+        lastMemoryContext = ""
         outputSuppressionActive = false
         shouldResumeMicAfterOutput = false
         failPendingSetup(GeminiError.badResponse("Live disconnected."))
@@ -219,6 +227,7 @@ final class GeminiLiveSession: ObservableObject {
     func sendMemoryContext(_ text: String) async throws {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, isConnected, didSendSetup else { return }
+        lastMemoryContext = trimmed
 
         try await sendJSON([
             "clientContent": [
@@ -375,9 +384,18 @@ final class GeminiLiveSession: ObservableObject {
                 }
                 onStatus?("Live ready.")
             }
-        } else if json["goAway"] != nil {
-            onError?("Live session asked to close.")
-            disconnect()
+        } else if let update = json["sessionResumptionUpdate"] as? [String: Any] {
+            if
+                (update["resumable"] as? Bool) == true,
+                let handle = update["newHandle"] as? String,
+                !handle.isEmpty
+            {
+                sessionResumptionHandle = handle
+                onStatus?("Live session checkpoint saved.")
+            }
+        } else if let goAway = json["goAway"] as? [String: Any] {
+            let timeLeft = goAway["timeLeft"] as? String ?? "soon"
+            onStatus?("Live server will rotate this socket \(timeLeft). Keep talking; reconnect is prepared.")
         }
     }
 

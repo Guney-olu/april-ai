@@ -78,6 +78,37 @@ enum Prompts {
         """
     }
 
+    static func sessionMemoryAutoSave(transcript: String) -> String {
+        """
+        Review this recent session transcript and extract durable memories for automatic local saving.
+
+        Transcript:
+        \(transcript)
+
+        Save only useful long-term memories: stable goals, preferences, project decisions, recurring patterns, lessons, and reusable workflows.
+        Do not save random chitchat, transient wording, secrets, API keys, passwords, payment data, or sensitive personal facts.
+        Be selective. If there is nothing worth remembering, return an empty candidates array.
+
+        Return strict JSON only, with no Markdown fence and no extra prose:
+        {
+          "title": "Short session title",
+          "summary": "A 1-3 sentence summary of why these memories were saved.",
+          "candidates": [
+            {
+              "type": "episodic|semantic|preference|procedural|prospective",
+              "content": "The durable memory to save.",
+              "summary": "Short label for the memory.",
+              "evidence": "Brief evidence from the session.",
+              "sensitivity": "low|medium|high",
+              "confidence": 0.0,
+              "importance": 0.0,
+              "reason": "Why this is worth saving."
+            }
+          ]
+        }
+        """
+    }
+
     static func research(topic: String, references: [ContextReference]) -> String {
         """
         Run a deep research style investigation for this topic:
