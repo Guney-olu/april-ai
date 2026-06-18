@@ -1,0 +1,308 @@
+import Foundation
+
+@MainActor
+final class LiveToolExecutor {
+    private let context: ContextLibrary
+    private let gemini: () -> GeminiClient
+    private let settings: () -> AppSettings
+    private let onMemoryChanged: () async -> Void
+
+    init(
+        context: ContextLibrary,
+        gemini: @escaping () -> GeminiClient,
+        settings: @escaping () -> AppSettings,
+        onMemoryChanged: @escaping () async -> Void
+    ) {
+        self.context = context
+        self.gemini = gemini
+        self.settings = settings
+        self.onMemoryChanged = onMemoryChanged
+    }
+
+    static let toolDeclarations: [[String: Any]] = [
+        [
+            "name": "search_memory",
+            "description": "Search April AI's approved local memories when the user asks about personal preferences, goals, project history, decisions, or prior context.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "query": [
+                        "type": "string",
+                        "description": "The memory search query."
+                    ],
+                    "limit": [
+                        "type": "integer",
+                        "description": "Maximum number of memories to return. Use 3-8."
+                    ],
+                    "types": [
+                        "type": "array",
+                        "items": ["type": "string"],
+                        "description": "Optional memory types to prefer: episodic, semantic, preference, procedural, prospective."
+                    ]
+                ],
+                "required": ["query"]
+            ]
+        ],
+        [
+            "name": "save_memory",
+            "description": "Save a safe, durable local memory about the user's preferences, goals, project decisions, or reusable workflows. Do not use for secrets, credentials, payment data, or sensitive personal facts.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "type": [
+                        "type": "string",
+                        "description": "Memory type: episodic, semantic, preference, procedural, or prospective."
+                    ],
+                    "content": [
+                        "type": "string",
+                        "description": "The durable memory to save."
+                    ],
+                    "summary": [
+                        "type": "string",
+                        "description": "Short label for the memory."
+                    ],
+                    "confidence": [
+                        "type": "number",
+                        "description": "Confidence from 0.0 to 1.0."
+                    ],
+                    "importance": [
+                        "type": "number",
+                        "description": "Importance from 0.0 to 1.0."
+                    ],
+                    "evidence": [
+                        "type": "string",
+                        "description": "Brief evidence from the conversation."
+                    ],
+                    "sensitivity": [
+                        "type": "string",
+                        "description": "Sensitivity: low, medium, or high."
+                    ]
+                ],
+                "required": ["content"]
+            ]
+        ],
+        [
+            "name": "google_search",
+            "description": "Search the web with Google grounding for current facts, factual verification, or information outside local memory.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "query": [
+                        "type": "string",
+                        "description": "The search question or topic."
+                    ],
+                    "context": [
+                        "type": "string",
+                        "description": "Optional context from the current conversation to focus the search."
+                    ]
+                ],
+                "required": ["query"]
+            ]
+        ]
+    ]
+
+    func execute(_ calls: [LiveToolFunctionCall]) async -> [LiveToolFunctionResponse] {
+        var responses: [LiveToolFunctionResponse] = []
+        for call in calls {
+            let response: [String: Any]
+            do {
+                switch call.name {
+                case "search_memory":
+                    response = try await searchMemory(args: call.args)
+                case "save_memory":
+                    response = try await saveMemory(args: call.args)
+                case "google_search":
+                    response = try await googleSearch(args: call.args)
+                default:
+                    response = [
+                        "ok": false,
+                        "error": "Unknown tool: \(call.name)"
+                    ]
+                }
+            } catch {
+                response = [
+                    "ok": false,
+                    "error": error.localizedDescription
+                ]
+            }
+
+            responses.append(LiveToolFunctionResponse(
+                id: call.id,
+                name: call.name,
+                response: response
+            ))
+        }
+        return responses
+    }
+
+    private func searchMemory(args: [String: Any]) async throws -> [String: Any] {
+        let query = stringArg("query", in: args)
+        guard !query.isEmpty else {
+            return ["ok": false, "error": "query is required"]
+        }
+
+        let limit = max(1, min(intArg("limit", in: args) ?? 6, 10))
+        let requestedTypes = Set(stringArrayArg("types", in: args).compactMap { MemoryKind(rawValue: $0.lowercased()) })
+        let embedding = try? await gemini().embedText(
+            query,
+            title: "Live memory tool query",
+            isQuery: true,
+            embeddingModel: settings().embeddingModel,
+            dimensions: settings().embeddingDimensions
+        )
+
+        var results = context.searchMemories(query, embedding: embedding, limit: limit * 2)
+        if !requestedTypes.isEmpty {
+            results = results.filter { requestedTypes.contains($0.item.type) }
+        }
+        results = Array(results.prefix(limit))
+
+        return [
+            "ok": true,
+            "query": query,
+            "matches": results.map { result in
+                [
+                    "id": result.item.id,
+                    "type": result.item.type.rawValue,
+                    "content": result.item.content,
+                    "summary": result.item.summary,
+                    "source": result.item.source,
+                    "confidence": result.item.confidence,
+                    "importance": result.item.importance,
+                    "score": result.score
+                ] as [String: Any]
+            }
+        ]
+    }
+
+    private func saveMemory(args: [String: Any]) async throws -> [String: Any] {
+        let content = stringArg("content", in: args)
+        guard !content.isEmpty else {
+            return ["ok": false, "error": "content is required"]
+        }
+
+        let sensitivity = stringArg("sensitivity", in: args).lowercased()
+        guard sensitivity != "high", !looksSensitive(content) else {
+            return [
+                "ok": false,
+                "saved": false,
+                "reason": "Rejected because the memory looks sensitive or secret-like."
+            ]
+        }
+
+        let type = MemoryKind(rawValue: stringArg("type", in: args).lowercased()) ?? .semantic
+        let candidate = MemoryCandidate(
+            type: type,
+            content: content,
+            summary: stringArg("summary", in: args).isEmpty ? content : stringArg("summary", in: args),
+            evidence: stringArg("evidence", in: args),
+            sensitivity: sensitivity.isEmpty ? "low" : sensitivity,
+            confidence: clamped(doubleArg("confidence", in: args) ?? 0.75),
+            importance: clamped(doubleArg("importance", in: args) ?? 0.7),
+            reason: "Saved by Live memory tool.",
+            isSelected: true
+        )
+
+        let embedding = try? await gemini().embedText(
+            candidate.content,
+            title: "\(candidate.type.label) memory",
+            isQuery: false,
+            embeddingModel: settings().embeddingModel,
+            dimensions: settings().embeddingDimensions
+        )
+
+        try context.saveReviewedMemories(
+            candidates: [candidate],
+            sessionTitle: "Live memory tool",
+            sessionSummary: "Memory saved from a Gemini Live tool call.",
+            embeddings: embedding.map { [candidate.id: $0] } ?? [:],
+            embeddingModel: settings().embeddingModel,
+            dimensions: settings().embeddingDimensions
+        )
+        await onMemoryChanged()
+
+        return [
+            "ok": true,
+            "saved": true,
+            "type": candidate.type.rawValue,
+            "content": candidate.content,
+            "embedded": embedding != nil
+        ]
+    }
+
+    private func googleSearch(args: [String: Any]) async throws -> [String: Any] {
+        let query = stringArg("query", in: args)
+        guard !query.isEmpty else {
+            return ["ok": false, "error": "query is required"]
+        }
+
+        let context = stringArg("context", in: args)
+        let result: GroundedSearchResult
+        do {
+            result = try await gemini().generateGroundedSearch(query: query, context: context)
+        } catch {
+            var fallback = gemini()
+            fallback.model = "gemini-3.1-flash-lite"
+            result = try await fallback.generateGroundedSearch(query: query, context: context)
+        }
+
+        return [
+            "ok": true,
+            "query": query,
+            "answer": result.answer,
+            "queries": result.queries,
+            "sources": result.sources.map { ["title": $0.title, "uri": $0.uri] }
+        ]
+    }
+
+    private func looksSensitive(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let blockedTerms = [
+            "api key", "apikey", "password", "passcode", "private key", "secret",
+            "token", "credit card", "debit card", "cvv", "ssn", "social security"
+        ]
+        if blockedTerms.contains(where: { lower.contains($0) }) {
+            return true
+        }
+
+        let patterns = [
+            #"AIza[0-9A-Za-z_-]{20,}"#,
+            #"(?i)bearer\s+[0-9a-z._-]{20,}"#,
+            #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#,
+            #"\b(?:\d[ -]*?){13,19}\b"#
+        ]
+        return patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+    }
+
+    private func stringArg(_ key: String, in args: [String: Any]) -> String {
+        if let value = args[key] as? String {
+            return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let value = args[key] as? NSNumber {
+            return value.stringValue
+        }
+        return ""
+    }
+
+    private func stringArrayArg(_ key: String, in args: [String: Any]) -> [String] {
+        (args[key] as? [String]) ?? []
+    }
+
+    private func intArg(_ key: String, in args: [String: Any]) -> Int? {
+        if let value = args[key] as? Int { return value }
+        if let value = args[key] as? NSNumber { return value.intValue }
+        if let value = args[key] as? String { return Int(value) }
+        return nil
+    }
+
+    private func doubleArg(_ key: String, in args: [String: Any]) -> Double? {
+        if let value = args[key] as? Double { return value }
+        if let value = args[key] as? NSNumber { return value.doubleValue }
+        if let value = args[key] as? String { return Double(value) }
+        return nil
+    }
+
+    private func clamped(_ value: Double) -> Double {
+        min(1, max(0, value))
+    }
+}

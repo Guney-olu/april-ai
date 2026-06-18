@@ -30,6 +30,7 @@ final class AppState: ObservableObject {
     let liveSession = GeminiLiveSession()
 
     private let keychain = KeychainStore()
+    private var liveToolExecutor: LiveToolExecutor!
     private var liveScreenShareTask: Task<Void, Never>?
     private var autoMemoryTask: Task<Void, Never>?
     private var sessionTurns: [SessionTurn] = []
@@ -51,6 +52,22 @@ final class AppState: ObservableObject {
         apiKeyInput = keychain.readAPIKey()
         settings.apiKeyStored = !apiKeyInput.isEmpty
         settings.save()
+        liveToolExecutor = LiveToolExecutor(
+            context: context,
+            gemini: { [weak self] in
+                guard let self else {
+                    return GeminiClient(apiKey: "", model: AppSettings.defaultTextModel)
+                }
+                return self.gemini()
+            },
+            settings: { [weak self] in
+                self?.settings ?? AppSettings()
+            },
+            onMemoryChanged: { [weak self] in
+                guard let self else { return }
+                _ = await self.refreshLiveMemoryAfterMemoryChange()
+            }
+        )
         configureLiveSessionCallbacks()
     }
 
@@ -185,7 +202,7 @@ final class AppState: ObservableObject {
                 apiKey: apiKeyInput,
                 model: settings.liveModel,
                 voice: settings.ttsVoice,
-                systemInstruction: Prompts.system + "\n\nFor live voice, keep spoken replies concise unless the user asks for depth. Challenge weak thinking, but do it quickly. If video frames arrive, treat them as the user's current screen and use them as live visual context. Approved long-term memories may be injected as background context; use them as fallible hints, not unquestionable truth."
+                systemInstruction: Prompts.liveSystem
             )
             try? await refreshLiveMemoryContext(silent: true)
         } catch {
@@ -515,6 +532,11 @@ final class AppState: ObservableObject {
                 self?.stopLiveScreenShare(notify: false)
                 self?.messages.append(ChatMessage(role: .system, content: message))
             }
+        }
+
+        liveSession.onToolCall = { [weak self] calls in
+            guard let self else { return [] }
+            return await self.liveToolExecutor.execute(calls)
         }
     }
 

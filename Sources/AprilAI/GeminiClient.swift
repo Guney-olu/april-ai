@@ -169,6 +169,68 @@ struct GeminiClient {
         return embedding
     }
 
+    func generateGroundedSearch(query: String, context: String = "") async throws -> GroundedSearchResult {
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw GeminiError.missingAPIKey
+        }
+
+        let prompt = """
+        Answer this question using Google Search grounding when useful.
+
+        Question:
+        \(query)
+
+        Conversation context:
+        \(context.isEmpty ? "None." : context)
+
+        Keep the answer concise for a live voice assistant. Include concrete facts and avoid filler.
+        """
+
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent")!
+        let payload: [String: Any] = [
+            "contents": [
+                [
+                    "role": "user",
+                    "parts": [["text": prompt]]
+                ]
+            ],
+            "tools": [
+                ["google_search": [:]]
+            ],
+            "generationConfig": [
+                "temperature": 0.35,
+                "topP": 0.9
+            ]
+        ]
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw GeminiError.badResponse("Gemini Search returned a non-HTTP response.")
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            let message = Self.extractError(from: data) ?? "Gemini Search HTTP \(http.statusCode)"
+            throw GeminiError.badResponse(message)
+        }
+
+        guard let answer = Self.extractText(from: data), !answer.isEmpty else {
+            throw GeminiError.badResponse("Gemini Search returned no answer.")
+        }
+
+        let grounding = Self.extractGrounding(from: data)
+        return GroundedSearchResult(
+            answer: answer,
+            queries: grounding.queries,
+            sources: grounding.sources
+        )
+    }
+
     private static func extractText(from data: Data) -> String? {
         guard
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -232,6 +294,37 @@ struct GeminiClient {
         }
 
         return nil
+    }
+
+    private static func extractGrounding(from data: Data) -> (queries: [String], sources: [GroundedSearchSource]) {
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let candidates = json["candidates"] as? [[String: Any]],
+            let metadata = candidates.first?["groundingMetadata"] as? [String: Any]
+        else {
+            return ([], [])
+        }
+
+        let queries = metadata["webSearchQueries"] as? [String] ?? []
+        let chunks = metadata["groundingChunks"] as? [[String: Any]] ?? []
+        var seen = Set<String>()
+        let sources = chunks.compactMap { chunk -> GroundedSearchSource? in
+            guard
+                let web = chunk["web"] as? [String: Any],
+                let uri = web["uri"] as? String,
+                !uri.isEmpty
+            else {
+                return nil
+            }
+
+            guard !seen.contains(uri) else { return nil }
+            seen.insert(uri)
+
+            let title = (web["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return GroundedSearchSource(title: title?.isEmpty == false ? title! : uri, uri: uri)
+        }
+
+        return (queries, sources)
     }
 
     static func wavData(fromPCM pcm: Data, sampleRate: UInt32, channels: UInt16, bitsPerSample: UInt16) -> Data {

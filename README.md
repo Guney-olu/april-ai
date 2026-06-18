@@ -64,6 +64,7 @@ You can choose another folder from the **Context** or **Settings** screen.
 - Live mic streaming from the Talk button, with returned audio chunks played as they arrive.
 - Live screen sharing sends low-resolution JPEG frames into the active Gemini Live session.
 - Live sessions enable context-window compression and session resumption hints to reduce abrupt audio-video session termination.
+- Live custom tools for approved memory search, guarded memory saving, and custom Google Search grounding.
 - Local playback of Gemini-generated speech audio for short replies.
 - Local `context/` folder structure:
   - `inbox/`
@@ -86,6 +87,8 @@ The **Talk** button opens a persistent Gemini Live WebSocket session the first t
 The Live mic path keeps CoreAudio's realtime callback away from SwiftUI/MainActor state. If macOS has microphone permission enabled, the app should not close when starting the mic.
 
 Gemini Live audio-video sessions can be shorter than audio-only sessions. April AI enables context-window compression, listens for Live session rotation signals, and retries transient screen-frame failures so screen sharing does not immediately kill the conversation.
+
+Live also exposes custom function tools. The model can search approved local memories, save safe durable memories, and run grounded Google Search through a separate REST call. The memory write tool rejects high-sensitivity or secret-looking content; manual deletion remains in the **Memory** tab.
 
 ## Memory
 

@@ -191,6 +191,29 @@ struct ResearchReport: Identifiable, Codable, Equatable {
     }
 }
 
+struct LiveToolFunctionCall {
+    let id: String
+    let name: String
+    let args: [String: Any]
+}
+
+struct LiveToolFunctionResponse {
+    let id: String
+    let name: String
+    let response: [String: Any]
+}
+
+struct GroundedSearchSource: Codable, Equatable {
+    let title: String
+    let uri: String
+}
+
+struct GroundedSearchResult: Codable, Equatable {
+    let answer: String
+    let queries: [String]
+    let sources: [GroundedSearchSource]
+}
+
 struct AppSettings: Codable, Equatable {
     static let defaultTextModel = "gemini-3.5-flash"
     static let defaultLiveModel = "gemini-3.1-flash-live-preview"

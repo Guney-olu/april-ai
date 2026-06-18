@@ -14,6 +14,7 @@ final class GeminiLiveSession: ObservableObject {
     var onTranscript: ((String, String) -> Void)?
     var onError: ((String) -> Void)?
     var onInterrupted: (() -> Void)?
+    var onToolCall: (@MainActor ([LiveToolFunctionCall]) async -> [LiveToolFunctionResponse])?
 
     private var apiKey = ""
     private var model = AppSettings.defaultLiveModel
@@ -29,6 +30,7 @@ final class GeminiLiveSession: ObservableObject {
     private var shouldResumeMicAfterOutput = false
     private var sessionResumptionHandle = ""
     private var lastMemoryContext = ""
+    private var cancelledToolCallIDs = Set<String>()
 
     func connect(apiKey: String, model: String, voice: String, systemInstruction: String) async throws {
         if isConnected, didSendSetup {
@@ -94,6 +96,11 @@ final class GeminiLiveSession: ObservableObject {
             "systemInstruction": [
                 "parts": [["text": systemInstruction]]
             ],
+            "tools": [
+                [
+                    "functionDeclarations": LiveToolExecutor.toolDeclarations
+                ]
+            ],
             "realtimeInputConfig": [
                 "automaticActivityDetection": [
                     "disabled": false,
@@ -134,6 +141,7 @@ final class GeminiLiveSession: ObservableObject {
         isConnected = false
         didSendSetup = false
         lastMemoryContext = ""
+        cancelledToolCallIDs.removeAll()
         outputSuppressionActive = false
         shouldResumeMicAfterOutput = false
         failPendingSetup(GeminiError.badResponse("Live disconnected."))
@@ -396,7 +404,62 @@ final class GeminiLiveSession: ObservableObject {
         } else if let goAway = json["goAway"] as? [String: Any] {
             let timeLeft = goAway["timeLeft"] as? String ?? "soon"
             onStatus?("Live server will rotate this socket \(timeLeft). Keep talking; reconnect is prepared.")
+        } else if let toolCall = json["toolCall"] as? [String: Any] {
+            handleToolCall(toolCall)
+        } else if let cancellation = json["toolCallCancellation"] as? [String: Any] {
+            let ids = cancellation["ids"] as? [String] ?? []
+            cancelledToolCallIDs.formUnion(ids)
+            onStatus?("Live cancelled \(ids.count) tool call\(ids.count == 1 ? "" : "s").")
         }
+    }
+
+    private func handleToolCall(_ toolCall: [String: Any]) {
+        guard let onToolCall else {
+            onError?("Live requested a tool, but no tool executor is configured.")
+            return
+        }
+
+        let calls = (toolCall["functionCalls"] as? [[String: Any]] ?? []).compactMap { raw -> LiveToolFunctionCall? in
+            guard
+                let id = raw["id"] as? String,
+                let name = raw["name"] as? String
+            else {
+                return nil
+            }
+
+            let args = raw["args"] as? [String: Any] ?? [:]
+            return LiveToolFunctionCall(id: id, name: name, args: args)
+        }
+
+        guard !calls.isEmpty else { return }
+        onStatus?("Live requested \(calls.count) tool call\(calls.count == 1 ? "" : "s").")
+
+        Task { @MainActor in
+            let responses = await onToolCall(calls)
+                .filter { !self.cancelledToolCallIDs.contains($0.id) }
+            guard !responses.isEmpty else { return }
+
+            do {
+                try await self.sendToolResponses(responses)
+                self.onStatus?("Live tool response sent.")
+            } catch {
+                self.onError?("Live tool response failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func sendToolResponses(_ responses: [LiveToolFunctionResponse]) async throws {
+        try await sendJSON([
+            "toolResponse": [
+                "functionResponses": responses.map { response in
+                    [
+                        "id": response.id,
+                        "name": response.name,
+                        "response": response.response
+                    ] as [String: Any]
+                }
+            ]
+        ])
     }
 
     private func sendJSON(_ object: [String: Any]) async throws {
