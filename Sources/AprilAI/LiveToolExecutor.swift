@@ -116,7 +116,7 @@ final class LiveToolExecutor {
         ],
         [
             "name": "click_mouse",
-            "description": "Click, double-click, or right-click the mouse. Optional normalized x/y moves before clicking. Requires visible one-time confirmation and Accessibility permission.",
+            "description": "Click, double-click, or right-click the mouse. Optional normalized x/y moves before clicking. Requires Accessibility permission and executes without a per-click confirmation.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -141,7 +141,7 @@ final class LiveToolExecutor {
         ],
         [
             "name": "type_text",
-            "description": "Type or paste text into the currently focused field after visible one-time confirmation. Do not use for passwords, secrets, purchases, sending messages, or irreversible workflows.",
+            "description": "Type or paste text into the currently focused field without a per-action confirmation. Requires Accessibility permission. Do not use for passwords, secrets, purchases, sending messages, or irreversible workflows.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -152,7 +152,7 @@ final class LiveToolExecutor {
         ],
         [
             "name": "press_key",
-            "description": "Press one allowed key after visible one-time confirmation. Allowed keys: return, tab, escape, delete, arrow keys, and cmd+l.",
+            "description": "Press one allowed key without a per-action confirmation. Requires Accessibility permission. Allowed keys: return, tab, escape, delete, arrow keys, and cmd+l.",
             "parameters": [
                 "type": "object",
                 "properties": [

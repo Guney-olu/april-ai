@@ -52,11 +52,6 @@ final class ComputerControlService {
             point = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
         }
 
-        let action = "\(safeCount == 2 ? "Double-click" : "Click") \(normalizedButton == "right" ? "right" : "left") mouse"
-        guard confirm(action: action, detail: "April AI wants to click at screen point \(Int(point.x)), \(Int(point.y)).") else {
-            return denied(action)
-        }
-
         if x != nil, y != nil {
             CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: mouseButton)?
                 .post(tap: .cghidEventTap)
@@ -100,11 +95,6 @@ final class ComputerControlService {
             return ComputerControlResult(ok: false, message: "Text cannot be empty.")
         }
 
-        let preview = text.count > 500 ? String(text.prefix(500)) + "..." : text
-        guard confirm(action: "Type text", detail: preview) else {
-            return denied("Type text")
-        }
-
         if shouldPaste(text) {
             await pasteWithClipboardRestore(text)
             return ComputerControlResult(ok: true, message: "Text pasted with clipboard restore.", metadata: ["characters": text.count, "method": "paste_restore"])
@@ -122,11 +112,6 @@ final class ComputerControlService {
 
         let normalizedModifiers = Set(modifiers.map { $0.lowercased() })
         let flags = eventFlags(for: normalizedModifiers)
-        let action = "Press \(normalizedModifiers.isEmpty ? "" : normalizedModifiers.sorted().joined(separator: "+") + "+")\(key)"
-        guard confirm(action: action, detail: "April AI wants to press this key once.") else {
-            return denied(action)
-        }
-
         postKey(keyCode, flags: flags)
         return ComputerControlResult(ok: true, message: "Key pressed.", metadata: ["key": key, "modifiers": Array(normalizedModifiers).sorted()])
     }

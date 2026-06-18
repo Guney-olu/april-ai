@@ -160,7 +160,7 @@ struct SettingsView: View {
                     .padding(10)
                 }
 
-                GroupBox("Confirmed Local Control") {
+                GroupBox("Local Control") {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Text("Accessibility")
@@ -174,10 +174,10 @@ struct SettingsView: View {
                             .foregroundStyle(state.accessibilityTrusted ? .green : .orange)
                         }
 
-                        Text("April AI can open apps and use confirmed Live tools for mouse movement, clicks, scrolling, typing, and a small key allowlist. Every control action shows an Approve Once dialog before it runs.")
+                        Text("April AI can use Live tools for mouse movement, clicks, scrolling, typing, and a small key allowlist. Clicks, typing, and allowed key presses execute without an extra approval dialog once Accessibility is granted.")
                             .foregroundStyle(.secondary)
 
-                        Text("It still cannot delete files, run shell commands, send messages, buy things, schedule events, or complete irreversible workflows for you.")
+                        Text("It still cannot delete files, run shell commands, send messages, buy things, schedule events, type secrets, or complete irreversible workflows for you.")
                             .foregroundStyle(.secondary)
 
                         HStack {

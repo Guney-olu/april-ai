@@ -278,7 +278,7 @@ let toolDeclarations: [[String: Any]] = [
     ],
     [
         "name": "click_mouse",
-        "description": "Click the mouse after confirmation.",
+        "description": "Click the mouse after Accessibility permission.",
         "parameters": [
             "type": "object",
             "properties": [
@@ -303,7 +303,7 @@ let toolDeclarations: [[String: Any]] = [
     ],
     [
         "name": "type_text",
-        "description": "Type text after confirmation.",
+        "description": "Type text after Accessibility permission.",
         "parameters": [
             "type": "object",
             "properties": [
@@ -314,7 +314,7 @@ let toolDeclarations: [[String: Any]] = [
     ],
     [
         "name": "press_key",
-        "description": "Press an allowed key after confirmation.",
+        "description": "Press an allowed key after Accessibility permission.",
         "parameters": [
             "type": "object",
             "properties": [
