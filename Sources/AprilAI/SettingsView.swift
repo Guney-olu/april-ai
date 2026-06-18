@@ -160,15 +160,43 @@ struct SettingsView: View {
                     .padding(10)
                 }
 
-                GroupBox("Read-Only Boundary") {
-                    Text("This app exposes no tool that clicks, types, deletes, sends, buys, schedules, executes shell commands, or operates other apps. It can only inspect user-provided context, on-demand screenshots, voice clips, and selected local files.")
-                        .foregroundStyle(.secondary)
-                        .padding(10)
+                GroupBox("Confirmed Local Control") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Accessibility")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Label(
+                                state.accessibilityTrusted ? "Granted" : "Not granted",
+                                systemImage: state.accessibilityTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                            )
+                            .foregroundStyle(state.accessibilityTrusted ? .green : .orange)
+                        }
+
+                        Text("April AI can open apps and use confirmed Live tools for mouse movement, clicks, scrolling, typing, and a small key allowlist. Every control action shows an Approve Once dialog before it runs.")
+                            .foregroundStyle(.secondary)
+
+                        Text("It still cannot delete files, run shell commands, send messages, buy things, schedule events, or complete irreversible workflows for you.")
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            Button("Request Accessibility Permission") {
+                                state.requestAccessibilityPermission()
+                            }
+                            Button("Refresh Status") {
+                                state.refreshAccessibilityTrust()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(10)
                 }
             }
             .padding(18)
         }
         .onAppear {
+            state.refreshAccessibilityTrust()
             guard !didLoadDrafts else { return }
             apiKeyDraft = state.apiKeyInput
             modelDraft = state.settings.model

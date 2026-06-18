@@ -13,6 +13,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("ApplicationServices"),
                 .linkedFramework("PDFKit"),
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("Security"),

@@ -214,6 +214,30 @@ struct GroundedSearchResult: Codable, Equatable {
     let sources: [GroundedSearchSource]
 }
 
+struct ComputerControlResult {
+    let ok: Bool
+    let message: String
+    let denied: Bool
+    let metadata: [String: Any]
+
+    init(ok: Bool, message: String, denied: Bool = false, metadata: [String: Any] = [:]) {
+        self.ok = ok
+        self.message = message
+        self.denied = denied
+        self.metadata = metadata
+    }
+
+    var toolResponse: [String: Any] {
+        var response = metadata
+        response["ok"] = ok
+        response["message"] = message
+        if denied {
+            response["denied"] = true
+        }
+        return response
+    }
+}
+
 struct AppSettings: Codable, Equatable {
     static let defaultTextModel = "gemini-3.5-flash"
     static let defaultLiveModel = "gemini-3.1-flash-live-preview"

@@ -263,6 +263,77 @@ let toolDeclarations: [[String: Any]] = [
             ],
             "required": ["query"]
         ]
+    ],
+    [
+        "name": "move_mouse",
+        "description": "Move the mouse to normalized main-display coordinates after confirmation.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "x": ["type": "number"],
+                "y": ["type": "number"]
+            ],
+            "required": ["x", "y"]
+        ]
+    ],
+    [
+        "name": "click_mouse",
+        "description": "Click the mouse after confirmation.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "x": ["type": "number"],
+                "y": ["type": "number"],
+                "button": ["type": "string"],
+                "count": ["type": "integer"]
+            ]
+        ]
+    ],
+    [
+        "name": "scroll_mouse",
+        "description": "Scroll the mouse after confirmation.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "delta_x": ["type": "number"],
+                "delta_y": ["type": "number"]
+            ],
+            "required": ["delta_y"]
+        ]
+    ],
+    [
+        "name": "type_text",
+        "description": "Type text after confirmation.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "text": ["type": "string"]
+            ],
+            "required": ["text"]
+        ]
+    ],
+    [
+        "name": "press_key",
+        "description": "Press an allowed key after confirmation.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "key": ["type": "string"],
+                "modifiers": ["type": "array", "items": ["type": "string"]]
+            ],
+            "required": ["key"]
+        ]
+    ],
+    [
+        "name": "open_application",
+        "description": "Open an installed application after confirmation.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "app": ["type": "string"]
+            ],
+            "required": ["app"]
+        ]
     ]
 ]
 

@@ -1,6 +1,6 @@
 # April AI
 
-A native macOS SwiftUI assistant that lives as both a full desktop window and a menu bar assistant. It is designed as a read-only, sarcastic, polymathic thinking partner: it can critique, explain, summarize, research, inspect on-demand screenshots, index a local context folder, and speak replies.
+A native macOS SwiftUI assistant that lives as both a full desktop window and a menu bar assistant. It is designed as a sarcastic, polymathic thinking partner with confirmed local-control tools: it can critique, explain, summarize, research, inspect on-demand screenshots, index a local context folder, speak replies, and request one-action approval before local keyboard/mouse/app actions.
 
 ## Run
 
@@ -33,6 +33,7 @@ Use `swift run` only for development/debugging. It launches a raw executable, no
 5. Open the **Context** tab.
 6. Drop PDFs, Markdown, text files, notes, logs, or code into `context/inbox`.
 7. Click **Index inbox**.
+8. Optional: open **Settings** and click **Request Accessibility Permission** if you want confirmed mouse and keyboard control during Live sessions.
 
 If macOS does not focus the API key field when running from `swift run`, use **Paste Clipboard** or **Enter in Dialog** in Settings. You can also launch with an environment key:
 
@@ -58,13 +59,13 @@ You can choose another folder from the **Context** or **Settings** screen.
 - Gemini Live WebSocket session using the saved Live model for lower-latency talk.
 - Fast text model option `gemini-3.1-flash-lite` in Settings.
 - Two-part assistant replies: a short spoken response and a full Markdown answer in chat.
-- Read-only system prompt and action boundary.
+- Confirmed local-control boundary with per-action approval prompts.
 - On-demand main-display screenshot capture.
 - Push-to-talk style voice clip recording.
 - Live mic streaming from the Talk button, with returned audio chunks played as they arrive.
 - Live screen sharing sends low-resolution JPEG frames into the active Gemini Live session.
 - Live sessions enable context-window compression and session resumption hints to reduce abrupt audio-video session termination.
-- Live custom tools for approved memory search, guarded memory saving, and custom Google Search grounding.
+- Live custom tools for approved memory search, guarded memory saving, custom Google Search grounding, app opening, mouse movement/click/scroll, text typing, and limited key presses.
 - Local playback of Gemini-generated speech audio for short replies.
 - Local `context/` folder structure:
   - `inbox/`
@@ -76,9 +77,18 @@ You can choose another folder from the **Context** or **Settings** screen.
 - Automatic local session memory saving, plus manual memory saving and delete controls.
 - Research reports saved to `context/research`.
 
-## Read-Only Boundary
+## Confirmed Local Control
 
-The app does not expose tools for clicking, typing, deleting, sending, buying, scheduling, running shell commands, or operating other apps. It can recommend and draft, but it cannot act.
+April AI can request local control through Live function tools, but every control action shows a native **Approve Once** confirmation dialog before execution. Mouse and keyboard tools also require macOS Accessibility permission, shown in **Settings**.
+
+Allowed local actions:
+
+- Open an installed app by exact app name or bundle id.
+- Move, click, double-click, right-click, and scroll the mouse.
+- Type text into the focused field.
+- Press a limited key allowlist: return, tab, escape, delete, arrow keys, and cmd+l.
+
+Still blocked by design: deleting files, running shell commands, sending messages, buying things, scheduling events, changing security settings, bypassing confirmations, or completing irreversible workflows.
 
 ## Live Talk
 
@@ -88,7 +98,7 @@ The Live mic path keeps CoreAudio's realtime callback away from SwiftUI/MainActo
 
 Gemini Live audio-video sessions can be shorter than audio-only sessions. April AI enables context-window compression, listens for Live session rotation signals, and retries transient screen-frame failures so screen sharing does not immediately kill the conversation.
 
-Live also exposes custom function tools. The model can search approved local memories, save safe durable memories, and run grounded Google Search through a separate REST call. The memory write tool rejects high-sensitivity or secret-looking content; manual deletion remains in the **Memory** tab.
+Live also exposes custom function tools. The model can search approved local memories, save safe durable memories, run grounded Google Search through a separate REST call, and request confirmed local-control actions. The memory write tool rejects high-sensitivity or secret-looking content; manual deletion remains in the **Memory** tab.
 
 ## Memory
 

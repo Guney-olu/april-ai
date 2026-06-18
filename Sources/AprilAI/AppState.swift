@@ -23,11 +23,13 @@ final class AppState: ObservableObject {
     @Published var status = "Ready."
     @Published var isBusy = false
     @Published var isLiveScreenSharing = false
+    @Published var accessibilityTrusted = false
 
     let context: ContextLibrary
     let speech = SpeechService()
     let voiceRecorder = VoiceRecorder()
     let liveSession = GeminiLiveSession()
+    let computerControl = ComputerControlService()
 
     private let keychain = KeychainStore()
     private var liveToolExecutor: LiveToolExecutor!
@@ -54,6 +56,7 @@ final class AppState: ObservableObject {
         settings.save()
         liveToolExecutor = LiveToolExecutor(
             context: context,
+            computerControl: computerControl,
             gemini: { [weak self] in
                 guard let self else {
                     return GeminiClient(apiKey: "", model: AppSettings.defaultTextModel)
@@ -68,6 +71,7 @@ final class AppState: ObservableObject {
                 _ = await self.refreshLiveMemoryAfterMemoryChange()
             }
         )
+        refreshAccessibilityTrust()
         configureLiveSessionCallbacks()
     }
 
@@ -130,6 +134,18 @@ final class AppState: ObservableObject {
             status = context.lastIndexSummary
             isBusy = false
         }
+    }
+
+    func refreshAccessibilityTrust() {
+        accessibilityTrusted = computerControl.isAccessibilityTrusted
+    }
+
+    func requestAccessibilityPermission() {
+        computerControl.requestAccessibilityPermission()
+        refreshAccessibilityTrust()
+        status = accessibilityTrusted
+            ? "Accessibility permission is active."
+            : "macOS opened the Accessibility permission prompt. Enable April AI, then quit and reopen if macOS still reports it inactive."
     }
 
     func sendDraft() {
@@ -296,7 +312,7 @@ final class AppState: ObservableObject {
                 let audio = try self.voiceRecorder.stop()
                 let prompt = """
                 The attached audio is the user's spoken request. Transcribe it mentally, answer it, and challenge weak reasoning.
-                If the user asked for an action, provide read-only recommendations instead.
+                If the user asked for local control, explain that control is available only through confirmed Live tools; otherwise provide a draft or checklist.
                 Return strict JSON only:
                 {
                   "speakable": "A maximum two-sentence spoken response. Keep it simple and useful.",

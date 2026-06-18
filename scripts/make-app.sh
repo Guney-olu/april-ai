@@ -31,7 +31,7 @@ chmod +x "$MACOS_DIR/$APP_NAME"
 /usr/bin/plutil -insert NSHighResolutionCapable -bool YES "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert NSMicrophoneUsageDescription -string "April AI records push-to-talk audio only when you start voice input." "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert NSScreenCaptureDescription -string "April AI captures the screen only when you click Look at screen." "$CONTENTS_DIR/Info.plist"
-/usr/bin/plutil -insert NSAppleEventsUsageDescription -string "April AI does not control other apps; this key is present only for macOS transparency if future read-only integrations are added." "$CONTENTS_DIR/Info.plist"
+/usr/bin/plutil -insert NSAppleEventsUsageDescription -string "April AI can open applications and request confirmed local keyboard or mouse actions. It does not use Apple Events to automate apps." "$CONTENTS_DIR/Info.plist"
 
 printf "APPL????" > "$CONTENTS_DIR/PkgInfo"
 
