@@ -104,7 +104,7 @@ final class LiveToolExecutor {
         ],
         [
             "name": "move_mouse",
-            "description": "Move the mouse cursor to normalized main-display coordinates. Requires a visible one-time user confirmation and Accessibility permission.",
+            "description": "Move the mouse cursor to normalized main-display coordinates. Requires Accessibility permission and executes without a per-action confirmation.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -129,7 +129,7 @@ final class LiveToolExecutor {
         ],
         [
             "name": "scroll_mouse",
-            "description": "Scroll the active UI by pixel deltas. Requires visible one-time confirmation and Accessibility permission.",
+            "description": "Scroll the active UI by pixel deltas. Requires Accessibility permission and executes without a per-action confirmation.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -164,7 +164,7 @@ final class LiveToolExecutor {
         ],
         [
             "name": "open_application",
-            "description": "Open an installed macOS application by exact app name or bundle id after visible one-time confirmation. Ambiguous names return candidate matches.",
+            "description": "Open an installed macOS application by exact app name or bundle id without a per-action confirmation. Ambiguous names return candidate matches.",
             "parameters": [
                 "type": "object",
                 "properties": [

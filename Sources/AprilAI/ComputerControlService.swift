@@ -18,11 +18,6 @@ final class ComputerControlService {
         guard let point = pointFromNormalized(x: x, y: y) else {
             return ComputerControlResult(ok: false, message: "Invalid mouse coordinates. Use x/y from 0.0 to 1.0.")
         }
-        let action = "Move mouse to x \(format(x)), y \(format(y))"
-        guard confirm(action: action, detail: "April AI wants to move your cursor.") else {
-            return denied(action)
-        }
-
         CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
             .post(tap: .cghidEventTap)
         return ComputerControlResult(ok: true, message: "Mouse moved.", metadata: ["x": x, "y": y])
@@ -71,11 +66,6 @@ final class ComputerControlService {
         let clampedY = max(-200, min(200, Int(deltaY)))
         guard clampedX != 0 || clampedY != 0 else {
             return ComputerControlResult(ok: false, message: "Scroll delta cannot be zero.")
-        }
-
-        let action = "Scroll mouse"
-        guard confirm(action: action, detail: "April AI wants to scroll by dx \(clampedX), dy \(clampedY).") else {
-            return denied(action)
         }
 
         CGEvent(
@@ -133,9 +123,6 @@ final class ComputerControlService {
                 metadata: ["candidates": candidates.map(\.lastPathComponent)]
             )
         case .found(let url):
-            guard confirm(action: "Open application", detail: "April AI wants to open \(url.lastPathComponent).") else {
-                return denied("Open application")
-            }
             NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
             return ComputerControlResult(ok: true, message: "Application opened.", metadata: ["app": url.lastPathComponent, "path": url.path])
         }
@@ -150,22 +137,6 @@ final class ComputerControlService {
             ok: false,
             message: "Accessibility permission is required for keyboard and mouse control. Open Settings and click Request Accessibility Permission."
         )
-    }
-
-    private func denied(_ action: String) -> ComputerControlResult {
-        ComputerControlResult(ok: false, message: "User denied action: \(action).", denied: true)
-    }
-
-    private func confirm(action: String, detail: String) -> Bool {
-        NSApp.activate(ignoringOtherApps: true)
-
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = action
-        alert.informativeText = detail
-        alert.addButton(withTitle: "Approve Once")
-        alert.addButton(withTitle: "Deny")
-        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func pointFromNormalized(x: Double, y: Double) -> CGPoint? {
@@ -296,9 +267,6 @@ final class ComputerControlService {
         }
     }
 
-    private func format(_ value: Double) -> String {
-        String(format: "%.2f", value)
-    }
 }
 
 private enum AppResolution {

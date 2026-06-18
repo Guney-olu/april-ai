@@ -266,7 +266,7 @@ let toolDeclarations: [[String: Any]] = [
     ],
     [
         "name": "move_mouse",
-        "description": "Move the mouse to normalized main-display coordinates after confirmation.",
+        "description": "Move the mouse to normalized main-display coordinates after Accessibility permission.",
         "parameters": [
             "type": "object",
             "properties": [
@@ -291,7 +291,7 @@ let toolDeclarations: [[String: Any]] = [
     ],
     [
         "name": "scroll_mouse",
-        "description": "Scroll the mouse after confirmation.",
+        "description": "Scroll the mouse after Accessibility permission.",
         "parameters": [
             "type": "object",
             "properties": [
@@ -326,7 +326,7 @@ let toolDeclarations: [[String: Any]] = [
     ],
     [
         "name": "open_application",
-        "description": "Open an installed application after confirmation.",
+        "description": "Open an installed application.",
         "parameters": [
             "type": "object",
             "properties": [

@@ -79,7 +79,7 @@ You can choose another folder from the **Context** or **Settings** screen.
 
 ## Local Control
 
-April AI can request local control through Live function tools. Mouse and keyboard tools require macOS Accessibility permission, shown in **Settings**. Clicks, typing, and allowed key presses execute without an extra approval dialog once that permission is active.
+April AI can request local control through Live function tools. Mouse and keyboard tools require macOS Accessibility permission, shown in **Settings**. Local-control tools execute without an extra approval dialog once the relevant macOS permission is active.
 
 Allowed local actions:
 
