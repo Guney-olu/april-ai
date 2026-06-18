@@ -17,12 +17,16 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
+if [ -d "$PROJECT_DIR/Resources" ]; then
+  cp -R "$PROJECT_DIR/Resources/." "$RESOURCES_DIR/"
+fi
 
 /usr/bin/plutil -create xml1 "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleExecutable -string "$APP_NAME" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleIdentifier -string "com.local.aprilai" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleName -string "April AI" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleDisplayName -string "April AI" "$CONTENTS_DIR/Info.plist"
+/usr/bin/plutil -insert CFBundleIconFile -string "AprilAI.icns" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundlePackageType -string "APPL" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleShortVersionString -string "0.1.0" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleVersion -string "1" "$CONTENTS_DIR/Info.plist"
