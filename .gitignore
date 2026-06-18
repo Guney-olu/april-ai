@@ -1,0 +1,21 @@
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserdata/
+.DS_Store
+*.app
+*.zip
+*.xcarchive
+*.dSYM
+
+# Local runtime data, memory, indexes, and secrets.
+context/
+*.sqlite3
+*.sqlite3-*
+*.db
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.mobileprovision
