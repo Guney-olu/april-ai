@@ -4,6 +4,26 @@ import Foundation
 import ScreenCaptureKit
 
 enum ScreenCaptureService {
+    static var isScreenCaptureTrusted: Bool {
+        CGPreflightScreenCaptureAccess()
+    }
+
+    @discardableResult
+    static func requestScreenCapturePermission() -> Bool {
+        CGRequestScreenCaptureAccess()
+    }
+
+    static func openScreenCaptureSettings() {
+        let urls = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenRecording"
+        ]
+        for value in urls {
+            guard let url = URL(string: value), NSWorkspace.shared.open(url) else { continue }
+            return
+        }
+    }
+
     static func captureMainDisplayPNG() async throws -> Data {
         let cgImage = try await captureMainDisplayCGImage()
         return try pngData(from: cgImage)

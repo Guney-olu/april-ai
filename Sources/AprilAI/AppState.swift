@@ -24,6 +24,7 @@ final class AppState: ObservableObject {
     @Published var isBusy = false
     @Published var isLiveScreenSharing = false
     @Published var accessibilityTrusted = false
+    @Published var screenCaptureTrusted = false
 
     let context: ContextLibrary
     let speech = SpeechService()
@@ -73,7 +74,7 @@ final class AppState: ObservableObject {
                 _ = await self.refreshLiveMemoryAfterMemoryChange()
             }
         )
-        refreshAccessibilityTrust()
+        refreshPermissionStatus()
         configureLiveSessionCallbacks()
     }
 
@@ -142,12 +143,34 @@ final class AppState: ObservableObject {
         accessibilityTrusted = computerControl.isAccessibilityTrusted
     }
 
+    func refreshScreenCaptureTrust() {
+        screenCaptureTrusted = ScreenCaptureService.isScreenCaptureTrusted
+    }
+
+    func refreshPermissionStatus() {
+        refreshAccessibilityTrust()
+        refreshScreenCaptureTrust()
+    }
+
     func requestAccessibilityPermission() {
         computerControl.requestAccessibilityPermission()
         refreshAccessibilityTrust()
         status = accessibilityTrusted
             ? "Accessibility permission is active."
             : "macOS opened the Accessibility permission prompt. Enable April AI, then quit and reopen if macOS still reports it inactive."
+    }
+
+    func requestScreenCapturePermission() {
+        let granted = ScreenCaptureService.requestScreenCapturePermission()
+        refreshScreenCaptureTrust()
+        status = granted || screenCaptureTrusted
+            ? "Screen Recording permission is active."
+            : "macOS opened the Screen Recording permission prompt. Enable April AI, then quit and reopen if macOS still reports it inactive."
+    }
+
+    func openScreenCaptureSettings() {
+        ScreenCaptureService.openScreenCaptureSettings()
+        status = "Opened Screen Recording privacy settings."
     }
 
     func sendDraft() {

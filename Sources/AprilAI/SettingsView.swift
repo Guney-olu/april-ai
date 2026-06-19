@@ -162,17 +162,10 @@ struct SettingsView: View {
 
                 GroupBox("Local Control") {
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("Accessibility")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Label(
-                                state.accessibilityTrusted ? "Granted" : "Not granted",
-                                systemImage: state.accessibilityTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                            )
-                            .foregroundStyle(state.accessibilityTrusted ? .green : .orange)
-                        }
+                        permissionHeader(
+                            title: "Accessibility",
+                            granted: state.accessibilityTrusted
+                        )
 
                         Text("April AI can use Live tools for native app Accessibility control, app opening, mouse movement, clicks, scrolling, typing, and a small key allowlist. Local-control tools execute without an extra approval dialog once the required macOS permission is active.")
                             .foregroundStyle(.secondary)
@@ -185,7 +178,30 @@ struct SettingsView: View {
                                 state.requestAccessibilityPermission()
                             }
                             Button("Refresh Status") {
-                                state.refreshAccessibilityTrust()
+                                state.refreshPermissionStatus()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+
+                        Divider()
+
+                        permissionHeader(
+                            title: "Screen Recording",
+                            granted: state.screenCaptureTrusted
+                        )
+
+                        Text("Screen sharing and Look at screen need macOS Screen & System Audio Recording permission. After changing this permission, quit and reopen April AI so macOS reloads it.")
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            Button("Request Screen Permission") {
+                                state.requestScreenCapturePermission()
+                            }
+                            Button("Open Privacy Settings") {
+                                state.openScreenCaptureSettings()
+                            }
+                            Button("Refresh Status") {
+                                state.refreshPermissionStatus()
                             }
                         }
                         .buttonStyle(.bordered)
@@ -196,7 +212,7 @@ struct SettingsView: View {
             .padding(18)
         }
         .onAppear {
-            state.refreshAccessibilityTrust()
+            state.refreshPermissionStatus()
             guard !didLoadDrafts else { return }
             apiKeyDraft = state.apiKeyInput
             modelDraft = state.settings.model
@@ -217,6 +233,20 @@ struct SettingsView: View {
                     )
                 }
             }
+        }
+    }
+
+    private func permissionHeader(title: String, granted: Bool) -> some View {
+        HStack {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Label(
+                granted ? "Granted" : "Not granted",
+                systemImage: granted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+            )
+            .foregroundStyle(granted ? .green : .orange)
         }
     }
 
