@@ -87,24 +87,26 @@ struct StatusBar: View {
 }
 
 struct AppIdentityHeader: View {
+    var iconSize: CGFloat = 38
+    var titleFont: Font = .headline.weight(.bold)
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 11) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
-                .frame(width: 38, height: 38)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(width: iconSize, height: iconSize)
+                .clipShape(RoundedRectangle(cornerRadius: iconSize * 0.22, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: iconSize * 0.22, style: .continuous)
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("April AI")
-                    .font(.headline.weight(.bold))
-                Text("Polymath engine")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text("April AI")
+                .font(titleFont)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
             Spacer()
         }
     }

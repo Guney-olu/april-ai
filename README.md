@@ -65,7 +65,7 @@ You can choose another folder from the **Context** or **Settings** screen.
 - Live mic streaming from the Talk button, with returned audio chunks played as they arrive.
 - Live screen sharing sends low-resolution JPEG frames into the active Gemini Live session.
 - Live sessions enable context-window compression and session resumption hints to reduce abrupt audio-video session termination.
-- Live custom tools for approved memory search, guarded memory saving, custom Google Search grounding, native app AX control, app opening, mouse movement/click/scroll, text typing, and limited key presses.
+- Live custom tools for approved memory search, guarded memory saving, custom Google Search grounding, AX-first native app control, app opening/activation/quit, menu actions, mouse fallback, text typing, and allowlisted shortcuts.
 - Local playback of Gemini-generated speech audio for short replies.
 - Local `context/` folder structure:
   - `inbox/`
@@ -83,11 +83,13 @@ April AI can request local control through Live function tools. Native app AX co
 
 Allowed local actions:
 
-- Open an installed app by exact app name or bundle id.
-- Snapshot native macOS app Accessibility trees, press exposed controls, focus elements, and set values without moving the cursor.
-- Move, click, double-click, right-click, and scroll the mouse.
+- Open, activate, or quit an installed app by exact app name or bundle id.
+- Search native macOS Accessibility trees, press exposed controls, focus elements, set values, and run menu actions without moving the cursor.
+- Move, click, double-click, right-click, and scroll the mouse as a fallback for browser/non-native surfaces.
 - Type text into the focused field.
-- Press a limited key allowlist: return, tab, escape, delete, arrow keys, and cmd+l.
+- Run a limited shortcut allowlist: copy, paste, cut, select all, undo, redo, find, open location, new/close/switch tab, close window, quit app, switch Space left/right, return, tab, escape, delete, and arrow keys.
+
+Mouse fallback uses explicit coordinate spaces. Normalized `x/y` must be `0.0...1.0`; screenshot pixel coordinates must use `coordinate_space=image_pixels` with coordinates from the latest Live frame. April AI exposes a `screen_geometry` tool so the model can debug Retina/HiDPI scaling instead of guessing like a caffeinated spreadsheet.
 
 Still blocked by design: deleting files, running shell commands, sending messages, buying things, scheduling events, changing security settings, typing secrets, or completing irreversible workflows.
 

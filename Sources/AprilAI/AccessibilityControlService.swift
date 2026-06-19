@@ -76,6 +76,171 @@ final class AccessibilityControlService {
         return ComputerControlResult(ok: true, message: "AX element focused.", metadata: ["element_id": elementID])
     }
 
+    func find(query: String, app: String, roles: [String], limit: Int) -> ComputerControlResult {
+        guard AXIsProcessTrusted() else { return accessibilityFailure() }
+        let normalizedQuery = normalized(query)
+        guard !normalizedQuery.isEmpty else {
+            return ComputerControlResult(ok: false, message: "AX query is required.")
+        }
+
+        let snapshot = captureSnapshot(app: app)
+        guard snapshot.result.ok else { return snapshot.result }
+        let roleFilter = Set(roles.map { normalized($0) }.filter { !$0.isEmpty })
+        let matches = rankedMatches(
+            query: normalizedQuery,
+            elements: snapshot.elements,
+            roleFilter: roleFilter,
+            limit: max(1, min(limit, 12))
+        )
+
+        return ComputerControlResult(
+            ok: true,
+            message: matches.isEmpty ? "No AX elements matched." : "AX matches found.",
+            metadata: [
+                "query": query,
+                "app": snapshot.appName,
+                "bundle_id": snapshot.bundleID,
+                "matches": matches
+            ]
+        )
+    }
+
+    func clickMatch(query: String, app: String, role: String) -> ComputerControlResult {
+        let match = bestMatch(query: query, app: app, roles: role.isEmpty ? [] : [role])
+        guard match.result.ok else { return match.result }
+        return press(elementID: match.elementID)
+            .mergingMetadata(["matched_element": match.metadata])
+    }
+
+    func focusMatch(query: String, app: String, role: String) -> ComputerControlResult {
+        let match = bestMatch(query: query, app: app, roles: role.isEmpty ? [] : [role])
+        guard match.result.ok else { return match.result }
+        return focus(elementID: match.elementID)
+            .mergingMetadata(["matched_element": match.metadata])
+    }
+
+    func setValueMatch(query: String, value: String, app: String, role: String) -> ComputerControlResult {
+        let match = bestMatch(query: query, app: app, roles: role.isEmpty ? [] : [role])
+        guard match.result.ok else { return match.result }
+        let focusResult = focus(elementID: match.elementID)
+        if !focusResult.ok {
+            return focusResult.mergingMetadata(["matched_element": match.metadata])
+        }
+        return setValue(elementID: match.elementID, value: value)
+            .mergingMetadata(["matched_element": match.metadata])
+    }
+
+    func menuAction(app: String, menuPath: String) -> ComputerControlResult {
+        guard AXIsProcessTrusted() else { return accessibilityFailure() }
+        guard let runningApp = resolveRunningApplication(app) else {
+            return ComputerControlResult(ok: false, message: app.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "No frontmost application is available."
+                : "No running application matched \(app).")
+        }
+
+        let parts = menuPath
+            .replacingOccurrences(of: "/", with: ">")
+            .split(separator: ">")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !parts.isEmpty else {
+            return ComputerControlResult(ok: false, message: "Menu path is required, for example File > Close Window.")
+        }
+
+        let root = AXUIElementCreateApplication(runningApp.processIdentifier)
+        guard let menuBarValue = copyAttribute("AXMenuBar", element: root) else {
+            return ComputerControlResult(ok: false, message: "This app does not expose an AX menu bar.")
+        }
+        let menuBar = menuBarValue as! AXUIElement
+
+        var current = menuBar
+        var traversed: [String] = []
+        for (index, part) in parts.enumerated() {
+            guard let next = childElements(for: current).first(where: { elementMatchesMenuPart($0, part) }) else {
+                return ComputerControlResult(ok: false, message: "Menu item not found: \(part).", metadata: ["traversed": traversed])
+            }
+            traversed.append(part)
+            current = next
+            if index < parts.count - 1 {
+                _ = AXUIElementPerformAction(current, "AXPress" as CFString)
+                Thread.sleep(forTimeInterval: 0.08)
+            }
+        }
+
+        let error = AXUIElementPerformAction(current, "AXPress" as CFString)
+        guard error == .success else {
+            return ComputerControlResult(ok: false, message: "AX menu action failed: \(error.readableName).", metadata: ["menu_path": parts])
+        }
+        return ComputerControlResult(
+            ok: true,
+            message: "AX menu action executed.",
+            metadata: [
+                "app": runningApp.localizedName ?? runningApp.bundleIdentifier ?? "Unknown",
+                "bundle_id": runningApp.bundleIdentifier ?? "",
+                "menu_path": parts
+            ]
+        )
+    }
+
+    private func captureSnapshot(app: String) -> (result: ComputerControlResult, appName: String, bundleID: String, elements: [[String: Any]]) {
+        guard let runningApp = resolveRunningApplication(app) else {
+            return (
+                ComputerControlResult(ok: false, message: app.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "No frontmost application is available."
+                    : "No running application matched \(app)."),
+                "",
+                "",
+                []
+            )
+        }
+
+        elementMap = [:]
+        snapshotCounter = 0
+        var visited: Set<UInt> = []
+        var elements: [[String: Any]] = []
+        let root = AXUIElementCreateApplication(runningApp.processIdentifier)
+        collect(element: root, depth: 0, parentID: nil, visited: &visited, output: &elements)
+        let appName = runningApp.localizedName ?? runningApp.bundleIdentifier ?? "Unknown"
+        let bundleID = runningApp.bundleIdentifier ?? ""
+        return (
+            ComputerControlResult(
+                ok: true,
+                message: "AX snapshot captured.",
+                metadata: [
+                    "app": appName,
+                    "bundle_id": bundleID,
+                    "pid": runningApp.processIdentifier,
+                    "element_count": elements.count,
+                    "elements": elements
+                ]
+            ),
+            appName,
+            bundleID,
+            elements
+        )
+    }
+
+    private func bestMatch(query: String, app: String, roles: [String]) -> (elementID: String, metadata: [String: Any], result: ComputerControlResult) {
+        guard AXIsProcessTrusted() else { return ("", [:], accessibilityFailure()) }
+        let normalizedQuery = normalized(query)
+        guard !normalizedQuery.isEmpty else {
+            return ("", [:], ComputerControlResult(ok: false, message: "AX query is required."))
+        }
+
+        let snapshot = captureSnapshot(app: app)
+        guard snapshot.result.ok else { return ("", [:], snapshot.result) }
+        let matches = rankedMatches(
+            query: normalizedQuery,
+            elements: snapshot.elements,
+            roleFilter: Set(roles.map { normalized($0) }.filter { !$0.isEmpty }),
+            limit: 1
+        )
+        guard let first = matches.first, let id = first["id"] as? String else {
+            return ("", [:], ComputerControlResult(ok: false, message: "No AX element matched \(query)."))
+        }
+        return (id, first, ComputerControlResult(ok: true, message: "AX element matched."))
+    }
+
     private func resolveRunningApplication(_ app: String) -> NSRunningApplication? {
         let query = app.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty {
@@ -151,6 +316,48 @@ final class AccessibilityControlService {
         return item
     }
 
+    private func rankedMatches(
+        query: String,
+        elements: [[String: Any]],
+        roleFilter: Set<String>,
+        limit: Int
+    ) -> [[String: Any]] {
+        elements.compactMap { item -> (score: Int, item: [String: Any])? in
+            let role = normalized(item["role"] as? String ?? "")
+            guard roleFilter.isEmpty || roleFilter.contains(role) || roleFilter.contains(role.replacingOccurrences(of: "ax", with: "")) else {
+                return nil
+            }
+
+            let title = normalized(item["title"] as? String ?? "")
+            let description = normalized(item["description"] as? String ?? "")
+            let value = normalized(item["value"] as? String ?? "")
+            let haystack = [title, description, value, role].joined(separator: " ")
+            guard haystack.contains(query) || query.split(separator: " ").allSatisfy({ haystack.contains($0) }) else {
+                return nil
+            }
+
+            var score = 1
+            if title == query { score += 50 }
+            if description == query { score += 35 }
+            if title.contains(query) { score += 20 }
+            if description.contains(query) { score += 14 }
+            if value.contains(query) { score += 8 }
+            if let enabled = item["enabled"] as? Bool, enabled { score += 5 }
+            if (item["actions"] as? [String])?.contains("AXPress") == true { score += 5 }
+
+            var scored = item
+            scored["score"] = score
+            return (score, scored)
+        }
+        .sorted { lhs, rhs in lhs.score > rhs.score }
+        .prefix(limit)
+        .map(\.item)
+    }
+
+    private func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     private func childElements(for element: AXUIElement) -> [AXUIElement] {
         var children: [AXUIElement] = []
         for attribute in ["AXWindows", "AXVisibleChildren", "AXChildren"] {
@@ -159,6 +366,16 @@ final class AccessibilityControlService {
             }
         }
         return children
+    }
+
+    private func elementMatchesMenuPart(_ element: AXUIElement, _ part: String) -> Bool {
+        let target = normalized(part)
+        let candidates = [
+            stringAttribute("AXTitle", element: element),
+            stringAttribute("AXDescription", element: element),
+            stringAttribute("AXValue", element: element)
+        ].map(normalized)
+        return candidates.contains(target) || candidates.contains { $0.replacingOccurrences(of: "...", with: "") == target }
     }
 
     private func actionNames(for element: AXUIElement) -> [String] {

@@ -106,8 +106,16 @@ final class LiveToolExecutor {
             ]
         ],
         [
+            "name": "screen_geometry",
+            "description": "Return the latest Live screen frame geometry, display bounds, backing scale factor, and current mouse position. Call this before mouse fallback when coordinate accuracy is uncertain.",
+            "parameters": [
+                "type": "object",
+                "properties": [:]
+            ]
+        ],
+        [
             "name": "move_mouse",
-            "description": "Move the mouse cursor to normalized main-display coordinates. Requires Accessibility permission and executes without a per-action confirmation.",
+            "description": "Move the mouse cursor. Use normalized x/y only for 0.0...1.0, or coordinate_space=image_pixels with image_x/image_y from the latest Live frame. Requires Accessibility permission and executes without a per-action confirmation.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -123,7 +131,7 @@ final class LiveToolExecutor {
         ],
         [
             "name": "click_mouse",
-            "description": "Click, double-click, or right-click the mouse. Optional normalized x/y moves before clicking. Requires Accessibility permission and executes without a per-click confirmation.",
+            "description": "Click, double-click, or right-click the mouse. Prefer AX tools first. Use normalized x/y only for 0.0...1.0, or coordinate_space=image_pixels with image_x/image_y from the latest Live frame. Requires Accessibility permission and executes without a per-click confirmation.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -164,7 +172,7 @@ final class LiveToolExecutor {
         ],
         [
             "name": "press_key",
-            "description": "Press one allowed key without a per-action confirmation. Requires Accessibility permission. Allowed keys: return, tab, escape, delete, arrow keys, and cmd+l.",
+            "description": "Legacy limited key tool. Prefer keyboard_shortcut. Requires Accessibility permission. Allowed keys: return, tab, escape, delete, arrow keys, and cmd+l.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -172,6 +180,17 @@ final class LiveToolExecutor {
                     "modifiers": ["type": "array", "items": ["type": "string"], "description": "Optional modifiers. Only cmd/command is useful for l."]
                 ],
                 "required": ["key"]
+            ]
+        ],
+        [
+            "name": "keyboard_shortcut",
+            "description": "Run one allowlisted keyboard shortcut without an extra approval dialog. Use only for reversible local UI control.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "action": ["type": "string", "description": "Allowed: copy, paste, cut, select_all, undo, redo, find, open_location, new_tab, close_tab, next_tab, previous_tab, close_window, quit_app, space_left, space_right, return, tab, escape, delete, left, right, up, down."]
+                ],
+                "required": ["action"]
             ]
         ],
         [
@@ -186,6 +205,38 @@ final class LiveToolExecutor {
             ]
         ],
         [
+            "name": "activate_application",
+            "description": "Activate a running macOS application by app name or bundle id without moving the cursor.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "app": ["type": "string", "description": "Application name, e.g. Brave Browser, or bundle id. Omit only when the frontmost app is intended."]
+                ],
+                "required": ["app"]
+            ]
+        ],
+        [
+            "name": "quit_application",
+            "description": "Request a running macOS application to quit by app name or bundle id. Do not use when unsaved work or irreversible consequences are likely.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "app": ["type": "string", "description": "Application name or bundle id."]
+                ],
+                "required": ["app"]
+            ]
+        ],
+        [
+            "name": "close_window",
+            "description": "Close the frontmost window of the frontmost or named app using AX menu action when available. Do not use for destructive confirmation dialogs.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "app": ["type": "string", "description": "Optional app name or bundle id. Omit for frontmost app."]
+                ]
+            ]
+        ],
+        [
             "name": "ax_snapshot",
             "description": "Snapshot the frontmost or named native macOS app Accessibility tree. Use this before AX press/set/focus so native apps can be controlled without moving the cursor.",
             "parameters": [
@@ -193,6 +244,72 @@ final class LiveToolExecutor {
                 "properties": [
                     "app": ["type": "string", "description": "Optional app name or bundle id. Omit for the frontmost app."]
                 ]
+            ]
+        ],
+        [
+            "name": "ax_find",
+            "description": "Find native macOS Accessibility elements by label/value/role without moving the cursor. Use before semantic AX actions when the target is described in natural language.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "query": ["type": "string", "description": "Visible label, title, value, or description to find."],
+                    "app": ["type": "string", "description": "Optional app name or bundle id. Omit for frontmost app."],
+                    "roles": ["type": "array", "items": ["type": "string"], "description": "Optional AX roles to prefer, such as AXButton, AXTextField, AXSearchField, AXMenuItem."],
+                    "limit": ["type": "integer", "description": "Maximum matches to return, 1-12."]
+                ],
+                "required": ["query"]
+            ]
+        ],
+        [
+            "name": "ax_click",
+            "description": "Find and press a native macOS Accessibility element by label/role without moving the cursor.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "query": ["type": "string", "description": "Visible label, title, value, or description to click."],
+                    "app": ["type": "string", "description": "Optional app name or bundle id. Omit for frontmost app."],
+                    "role": ["type": "string", "description": "Optional AX role to prefer, such as AXButton."]
+                ],
+                "required": ["query"]
+            ]
+        ],
+        [
+            "name": "ax_focus_match",
+            "description": "Find and focus a native macOS Accessibility element by label/role without moving the cursor.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "query": ["type": "string", "description": "Visible label, title, value, or description to focus."],
+                    "app": ["type": "string", "description": "Optional app name or bundle id. Omit for frontmost app."],
+                    "role": ["type": "string", "description": "Optional AX role to prefer, such as AXTextField or AXSearchField."]
+                ],
+                "required": ["query"]
+            ]
+        ],
+        [
+            "name": "ax_set_value_match",
+            "description": "Find a native macOS text/value element and set its value without moving the cursor. Do not use for secrets, passwords, or payment data.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "query": ["type": "string", "description": "Visible label, title, value, or description of the target field."],
+                    "value": ["type": "string", "description": "Text/value to set."],
+                    "app": ["type": "string", "description": "Optional app name or bundle id. Omit for frontmost app."],
+                    "role": ["type": "string", "description": "Optional AX role to prefer, such as AXTextField or AXSearchField."]
+                ],
+                "required": ["query", "value"]
+            ]
+        ],
+        [
+            "name": "ax_menu_action",
+            "description": "Run a native app menu action through Accessibility without moving the cursor, such as File > Close Window or Edit > Copy.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "app": ["type": "string", "description": "Optional app name or bundle id. Omit for frontmost app."],
+                    "menu_path": ["type": "string", "description": "Menu path separated by >, for example File > Close Window."]
+                ],
+                "required": ["menu_path"]
             ]
         ],
         [
@@ -243,6 +360,8 @@ final class LiveToolExecutor {
                     response = try await saveMemory(args: call.args)
                 case "google_search":
                     response = try await googleSearch(args: call.args)
+                case "screen_geometry":
+                    response = computerControl.screenGeometry().toolResponse
                 case "move_mouse":
                     response = computerControl.moveMouse(
                         x: doubleArg("x", in: call.args),
@@ -277,10 +396,59 @@ final class LiveToolExecutor {
                         stringArg("key", in: call.args),
                         modifiers: stringArrayArg("modifiers", in: call.args)
                     ).toolResponse
+                case "keyboard_shortcut":
+                    response = computerControl.keyboardShortcut(stringArg("action", in: call.args)).toolResponse
                 case "open_application":
                     response = computerControl.openApplication(stringArg("app", in: call.args)).toolResponse
+                case "activate_application":
+                    response = computerControl.activateApplication(stringArg("app", in: call.args)).toolResponse
+                case "quit_application":
+                    response = computerControl.quitApplication(stringArg("app", in: call.args)).toolResponse
+                case "close_window":
+                    let app = stringArg("app", in: call.args)
+                    let closeResult = accessibilityControl.menuAction(app: app, menuPath: "File > Close Window")
+                    if closeResult.ok {
+                        response = closeResult.toolResponse
+                    } else if app.isEmpty {
+                        response = computerControl.keyboardShortcut("close_window")
+                            .mergingMetadata(["ax_menu_result": closeResult.toolResponse])
+                            .toolResponse
+                    } else {
+                        response = closeResult.toolResponse
+                    }
                 case "ax_snapshot":
                     response = accessibilityControl.snapshot(app: stringArg("app", in: call.args)).toolResponse
+                case "ax_find":
+                    response = accessibilityControl.find(
+                        query: stringArg("query", in: call.args),
+                        app: stringArg("app", in: call.args),
+                        roles: stringArrayArg("roles", in: call.args),
+                        limit: intArg("limit", in: call.args) ?? 6
+                    ).toolResponse
+                case "ax_click":
+                    response = accessibilityControl.clickMatch(
+                        query: stringArg("query", in: call.args),
+                        app: stringArg("app", in: call.args),
+                        role: stringArg("role", in: call.args)
+                    ).toolResponse
+                case "ax_focus_match":
+                    response = accessibilityControl.focusMatch(
+                        query: stringArg("query", in: call.args),
+                        app: stringArg("app", in: call.args),
+                        role: stringArg("role", in: call.args)
+                    ).toolResponse
+                case "ax_set_value_match":
+                    response = accessibilityControl.setValueMatch(
+                        query: stringArg("query", in: call.args),
+                        value: rawStringArg("value", in: call.args),
+                        app: stringArg("app", in: call.args),
+                        role: stringArg("role", in: call.args)
+                    ).toolResponse
+                case "ax_menu_action":
+                    response = accessibilityControl.menuAction(
+                        app: stringArg("app", in: call.args),
+                        menuPath: stringArg("menu_path", in: call.args)
+                    ).toolResponse
                 case "ax_press":
                     response = accessibilityControl.press(elementID: stringArg("element_id", in: call.args)).toolResponse
                 case "ax_set_value":

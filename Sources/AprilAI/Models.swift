@@ -239,6 +239,17 @@ struct ComputerControlResult {
     }
 }
 
+extension ComputerControlResult {
+    func mergingMetadata(_ extra: [String: Any]) -> ComputerControlResult {
+        ComputerControlResult(
+            ok: ok,
+            message: message,
+            denied: denied,
+            metadata: metadata.merging(extra) { _, new in new }
+        )
+    }
+}
+
 struct ScreenFrameGeometry: Equatable {
     let displayID: UInt32
     let capturePixelWidth: Int

@@ -265,6 +265,14 @@ let toolDeclarations: [[String: Any]] = [
         ]
     ],
     [
+        "name": "screen_geometry",
+        "description": "Return latest Live screen geometry.",
+        "parameters": [
+            "type": "object",
+            "properties": [:]
+        ]
+    ],
+    [
         "name": "move_mouse",
         "description": "Move the mouse using normalized coordinates or latest Live image pixels.",
         "parameters": [
@@ -334,6 +342,17 @@ let toolDeclarations: [[String: Any]] = [
         ]
     ],
     [
+        "name": "keyboard_shortcut",
+        "description": "Run an allowlisted keyboard shortcut.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "action": ["type": "string"]
+            ],
+            "required": ["action"]
+        ]
+    ],
+    [
         "name": "open_application",
         "description": "Open an installed application.",
         "parameters": [
@@ -345,6 +364,38 @@ let toolDeclarations: [[String: Any]] = [
         ]
     ],
     [
+        "name": "activate_application",
+        "description": "Activate a running application.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "app": ["type": "string"]
+            ],
+            "required": ["app"]
+        ]
+    ],
+    [
+        "name": "quit_application",
+        "description": "Quit a running application.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "app": ["type": "string"]
+            ],
+            "required": ["app"]
+        ]
+    ],
+    [
+        "name": "close_window",
+        "description": "Close the frontmost or named app window.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "app": ["type": "string"]
+            ]
+        ]
+    ],
+    [
         "name": "ax_snapshot",
         "description": "Snapshot native macOS Accessibility elements.",
         "parameters": [
@@ -352,6 +403,72 @@ let toolDeclarations: [[String: Any]] = [
             "properties": [
                 "app": ["type": "string"]
             ]
+        ]
+    ],
+    [
+        "name": "ax_find",
+        "description": "Find Accessibility elements by query.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "query": ["type": "string"],
+                "app": ["type": "string"],
+                "roles": ["type": "array", "items": ["type": "string"]],
+                "limit": ["type": "integer"]
+            ],
+            "required": ["query"]
+        ]
+    ],
+    [
+        "name": "ax_click",
+        "description": "Find and press an Accessibility element.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "query": ["type": "string"],
+                "app": ["type": "string"],
+                "role": ["type": "string"]
+            ],
+            "required": ["query"]
+        ]
+    ],
+    [
+        "name": "ax_focus_match",
+        "description": "Find and focus an Accessibility element.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "query": ["type": "string"],
+                "app": ["type": "string"],
+                "role": ["type": "string"]
+            ],
+            "required": ["query"]
+        ]
+    ],
+    [
+        "name": "ax_set_value_match",
+        "description": "Find and set an Accessibility value.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "query": ["type": "string"],
+                "value": ["type": "string"],
+                "app": ["type": "string"],
+                "role": ["type": "string"]
+            ],
+            "required": ["query", "value"]
+        ]
+    ],
+    [
+        "name": "ax_menu_action",
+        "description": "Run a native app menu action.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "app": ["type": "string"],
+                "menu_path": ["type": "string"]
+            ],
+            "required": ["menu_path"]
         ]
     ],
     [

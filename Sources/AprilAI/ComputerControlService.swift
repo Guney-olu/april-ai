@@ -19,6 +19,18 @@ final class ComputerControlService {
         latestScreenFrameGeometry = geometry
     }
 
+    func screenGeometry() -> ComputerControlResult {
+        var metadata = (latestScreenFrameGeometry ?? fallbackGeometry()).toolMetadata
+        let mouse = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
+        metadata["has_live_frame"] = latestScreenFrameGeometry != nil
+        metadata["current_mouse"] = ["x": mouse.x, "y": mouse.y]
+        metadata["coordinate_rules"] = [
+            "normalized": "x/y must be 0.0...1.0 relative to the main display.",
+            "image_pixels": "Use coordinate_space=image_pixels with image_x/image_y from the latest sent Live frame."
+        ]
+        return ComputerControlResult(ok: true, message: "Screen geometry ready.", metadata: metadata)
+    }
+
     func moveMouse(
         x: Double?,
         y: Double?,
@@ -42,8 +54,7 @@ final class ComputerControlService {
             return resolution.result
         }
         let point = resolution.point
-        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
-            .post(tap: .cghidEventTap)
+        moveCursor(to: point, button: .left)
         return ComputerControlResult(ok: true, message: "Mouse moved.", metadata: resolution.metadata)
     }
 
@@ -96,8 +107,8 @@ final class ComputerControlService {
         }
 
         if hasRequestedPoint {
-            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: mouseButton)?
-                .post(tap: .cghidEventTap)
+            moveCursor(to: point, button: mouseButton)
+            Thread.sleep(forTimeInterval: 0.035)
         }
         for _ in 0..<safeCount {
             CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: point, mouseButton: mouseButton)?
@@ -154,6 +165,28 @@ final class ComputerControlService {
         return ComputerControlResult(ok: true, message: "Key pressed.", metadata: ["key": key, "modifiers": Array(normalizedModifiers).sorted()])
     }
 
+    func keyboardShortcut(_ action: String) -> ComputerControlResult {
+        guard ensureAccessibility() else { return accessibilityFailure() }
+        let normalized = action
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+        guard let shortcut = shortcut(for: normalized) else {
+            return ComputerControlResult(
+                ok: false,
+                message: "Unsupported shortcut. Allowed: copy, paste, cut, select_all, undo, redo, find, open_location, new_tab, close_tab, next_tab, previous_tab, close_window, quit_app, space_left, space_right, return, tab, escape, delete, and arrows."
+            )
+        }
+
+        postKey(shortcut.keyCode, flags: shortcut.flags)
+        return ComputerControlResult(
+            ok: true,
+            message: "Shortcut executed.",
+            metadata: ["action": normalized, "key_code": shortcut.keyCode, "modifiers": shortcut.modifierNames]
+        )
+    }
+
     func openApplication(_ app: String) -> ComputerControlResult {
         let query = app.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
@@ -174,6 +207,34 @@ final class ComputerControlService {
             NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
             return ComputerControlResult(ok: true, message: "Application opened.", metadata: ["app": url.lastPathComponent, "path": url.path])
         }
+    }
+
+    func activateApplication(_ app: String) -> ComputerControlResult {
+        guard let runningApp = resolveRunningApplication(app) else {
+            return ComputerControlResult(ok: false, message: "No running application matched \(app).")
+        }
+        let ok = runningApp.activate(options: [.activateIgnoringOtherApps])
+        return ComputerControlResult(
+            ok: ok,
+            message: ok ? "Application activated." : "Application activation failed.",
+            metadata: runningAppMetadata(runningApp)
+        )
+    }
+
+    func quitApplication(_ app: String) -> ComputerControlResult {
+        let query = app.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            return ComputerControlResult(ok: false, message: "Application name or bundle id is required.")
+        }
+        guard let runningApp = resolveRunningApplication(query) else {
+            return ComputerControlResult(ok: false, message: "No running application matched \(query).")
+        }
+        let ok = runningApp.terminate()
+        return ComputerControlResult(
+            ok: ok,
+            message: ok ? "Application quit requested." : "Application quit request failed.",
+            metadata: runningAppMetadata(runningApp)
+        )
     }
 
     private func ensureAccessibility() -> Bool {
@@ -242,6 +303,9 @@ final class ComputerControlService {
         guard width > 0, height > 0 else {
             return failure("image_width and image_height must be greater than zero.")
         }
+        guard (0...width).contains(imageX), (0...height).contains(imageY) else {
+            return failure("image_x/image_y are outside the latest Live image bounds. Call screen_geometry and use coordinates from the sent image size.")
+        }
 
         let bounds = geometry.logicalBounds
         let point = CGPoint(
@@ -280,6 +344,12 @@ final class ComputerControlService {
 
     private func failure(_ message: String) -> (point: CGPoint, metadata: [String: Any], result: ComputerControlResult) {
         (.zero, [:], ComputerControlResult(ok: false, message: message))
+    }
+
+    private func moveCursor(to point: CGPoint, button: CGMouseButton) {
+        CGWarpMouseCursorPosition(point)
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: button)?
+            .post(tap: .cghidEventTap)
     }
 
     private func shouldPaste(_ text: String) -> Bool {
@@ -337,6 +407,35 @@ final class ComputerControlService {
         }
     }
 
+    private func shortcut(for action: String) -> KeyboardShortcut? {
+        switch action {
+        case "copy": return KeyboardShortcut(keyCode: 8, flags: .maskCommand, modifierNames: ["cmd"])
+        case "paste": return KeyboardShortcut(keyCode: 9, flags: .maskCommand, modifierNames: ["cmd"])
+        case "cut": return KeyboardShortcut(keyCode: 7, flags: .maskCommand, modifierNames: ["cmd"])
+        case "select_all": return KeyboardShortcut(keyCode: 0, flags: .maskCommand, modifierNames: ["cmd"])
+        case "undo": return KeyboardShortcut(keyCode: 6, flags: .maskCommand, modifierNames: ["cmd"])
+        case "redo": return KeyboardShortcut(keyCode: 6, flags: [.maskCommand, .maskShift], modifierNames: ["cmd", "shift"])
+        case "find", "search": return KeyboardShortcut(keyCode: 3, flags: .maskCommand, modifierNames: ["cmd"])
+        case "open_location", "address_bar": return KeyboardShortcut(keyCode: 37, flags: .maskCommand, modifierNames: ["cmd"])
+        case "new_tab": return KeyboardShortcut(keyCode: 17, flags: .maskCommand, modifierNames: ["cmd"])
+        case "close_tab", "close_window": return KeyboardShortcut(keyCode: 13, flags: .maskCommand, modifierNames: ["cmd"])
+        case "next_tab": return KeyboardShortcut(keyCode: 48, flags: .maskControl, modifierNames: ["control"])
+        case "previous_tab": return KeyboardShortcut(keyCode: 48, flags: [.maskControl, .maskShift], modifierNames: ["control", "shift"])
+        case "quit_app": return KeyboardShortcut(keyCode: 12, flags: .maskCommand, modifierNames: ["cmd"])
+        case "space_left", "screen_left": return KeyboardShortcut(keyCode: 123, flags: .maskControl, modifierNames: ["control"])
+        case "space_right", "screen_right": return KeyboardShortcut(keyCode: 124, flags: .maskControl, modifierNames: ["control"])
+        case "return", "enter": return KeyboardShortcut(keyCode: 36, flags: [], modifierNames: [])
+        case "tab": return KeyboardShortcut(keyCode: 48, flags: [], modifierNames: [])
+        case "escape", "esc": return KeyboardShortcut(keyCode: 53, flags: [], modifierNames: [])
+        case "delete", "backspace": return KeyboardShortcut(keyCode: 51, flags: [], modifierNames: [])
+        case "left", "arrow_left", "left_arrow": return KeyboardShortcut(keyCode: 123, flags: [], modifierNames: [])
+        case "right", "arrow_right", "right_arrow": return KeyboardShortcut(keyCode: 124, flags: [], modifierNames: [])
+        case "down", "arrow_down", "down_arrow": return KeyboardShortcut(keyCode: 125, flags: [], modifierNames: [])
+        case "up", "arrow_up", "up_arrow": return KeyboardShortcut(keyCode: 126, flags: [], modifierNames: [])
+        default: return nil
+        }
+    }
+
     private func eventFlags(for modifiers: Set<String>) -> CGEventFlags {
         var flags: CGEventFlags = []
         if modifiers.contains("cmd") || modifiers.contains("command") { flags.insert(.maskCommand) }
@@ -381,6 +480,35 @@ final class ComputerControlService {
         return .notFound
     }
 
+    private func resolveRunningApplication(_ app: String) -> NSRunningApplication? {
+        let query = app.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            return NSWorkspace.shared.frontmostApplication
+        }
+
+        let matches = NSWorkspace.shared.runningApplications.filter { runningApp in
+            let bundleID = runningApp.bundleIdentifier ?? ""
+            let name = runningApp.localizedName ?? ""
+            return bundleID.localizedCaseInsensitiveCompare(query) == .orderedSame
+                || name.localizedCaseInsensitiveCompare(query) == .orderedSame
+                || bundleID.localizedCaseInsensitiveContains(query)
+                || name.localizedCaseInsensitiveContains(query)
+        }
+
+        if matches.count == 1 {
+            return matches[0]
+        }
+        return matches.first(where: { $0.isActive }) ?? matches.first
+    }
+
+    private func runningAppMetadata(_ app: NSRunningApplication) -> [String: Any] {
+        [
+            "app": app.localizedName ?? app.bundleIdentifier ?? "Unknown",
+            "bundle_id": app.bundleIdentifier ?? "",
+            "pid": app.processIdentifier
+        ]
+    }
+
     private func applicationDirectories() -> [URL] {
         [
             URL(fileURLWithPath: "/Applications"),
@@ -404,6 +532,12 @@ final class ComputerControlService {
         }
     }
 
+}
+
+private struct KeyboardShortcut {
+    let keyCode: CGKeyCode
+    let flags: CGEventFlags
+    let modifierNames: [String]
 }
 
 private enum AppResolution {
