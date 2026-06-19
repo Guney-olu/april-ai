@@ -15,6 +15,7 @@ struct ChatView: View {
                     }
                     .padding(18)
                 }
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.28))
                 .onChange(of: state.messages.count) {
                     if let last = state.messages.last {
                         proxy.scrollTo(last.id, anchor: .bottom)
@@ -24,75 +25,39 @@ struct ChatView: View {
 
             Divider()
 
-            VStack(spacing: 10) {
-                HStack {
-                    Button {
-                        state.lookAtScreen()
-                    } label: {
-                        Label("Look at screen", systemImage: "display")
-                    }
-
-                    Button {
-                        state.startOrStopVoice()
-                    } label: {
-                        Label(
+            VStack(alignment: .leading, spacing: 12) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        controlButton("Look", systemImage: "display", action: state.lookAtScreen)
+                        controlButton(
                             liveMicButtonTitle,
-                            systemImage: state.liveSession.isStreamingMic ? "stop.circle" : "mic.circle"
+                            systemImage: state.liveSession.isStreamingMic ? "stop.circle" : "mic.circle",
+                            action: state.startOrStopVoice
                         )
-                    }
-
-                    Button {
-                        state.toggleLiveScreenShare()
-                    } label: {
-                        Label(
-                            state.isLiveScreenSharing ? "Stop live screen" : "Share live screen",
-                            systemImage: state.isLiveScreenSharing ? "rectangle.on.rectangle.slash" : "rectangle.on.rectangle"
+                        controlButton(
+                            state.isLiveScreenSharing ? "Stop screen" : "Share screen",
+                            systemImage: state.isLiveScreenSharing ? "rectangle.on.rectangle.slash" : "rectangle.on.rectangle",
+                            action: state.toggleLiveScreenShare
                         )
-                    }
-
-                    Button {
-                        state.disconnectLive()
-                    } label: {
-                        Label("Disconnect live", systemImage: "bolt.slash")
-                    }
-
-                    Button {
-                        state.refreshLiveMemoryContextButton()
-                    } label: {
-                        Label("Refresh memory", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(!state.liveSession.isConnected)
-
-                    Button {
-                        state.speakLastAssistantMessage()
-                    } label: {
-                        Label("Speak short", systemImage: "speaker.wave.2")
-                    }
-
-                    Button {
-                        state.stopSpeech()
-                    } label: {
-                        Label("Stop speech", systemImage: "speaker.slash")
+                        controlButton("Disconnect", systemImage: "bolt.slash", action: state.disconnectLive)
+                        controlButton("Memory", systemImage: "arrow.clockwise", action: state.refreshLiveMemoryContextButton)
+                            .disabled(!state.liveSession.isConnected)
+                        controlButton("Speak", systemImage: "speaker.wave.2", action: state.speakLastAssistantMessage)
+                        controlButton("Silence", systemImage: "speaker.slash", action: state.stopSpeech)
                     }
                 }
-                .buttonStyle(.bordered)
 
                 HStack(spacing: 8) {
-                    Circle()
-                        .fill(state.liveSession.isConnected ? Color.green : Color.secondary)
-                        .frame(width: 8, height: 8)
-                    Text(state.liveSession.isConnected ? "Live connected: \(state.settings.liveModel)" : "Live disconnected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    StatusPill(
+                        title: state.liveSession.isConnected ? "Live" : "Offline",
+                        systemImage: state.liveSession.isConnected ? "bolt.fill" : "bolt.slash",
+                        color: state.liveSession.isConnected ? .green : .secondary
+                    )
                     if state.liveSession.isStreamingMic {
-                        Text("Mic streaming")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.green)
+                        StatusPill(title: "Mic", systemImage: "mic.fill", color: .green)
                     }
                     if state.isLiveScreenSharing {
-                        Text("Screen sharing")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.orange)
+                        StatusPill(title: "Screen", systemImage: "rectangle.on.rectangle", color: .orange)
                     }
                     if state.liveSession.sentAudioChunkCount > 0 {
                         Text("\(state.liveSession.sentAudioChunkCount) audio chunks sent")
@@ -124,7 +89,8 @@ struct ChatView: View {
                     .disabled(state.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .padding()
+            .padding(14)
+            .background(.bar)
         }
     }
 
@@ -134,49 +100,80 @@ struct ChatView: View {
         }
         return state.liveSession.isStreamingMic ? "Pause live mic" : "Start live mic"
     }
+
+    private func controlButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+    }
 }
 
 struct MessageBubble: View {
     let message: ChatMessage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(titleColor)
-
-            Text(.init(message.content))
-                .textSelection(.enabled)
-
-            if message.role == .assistant, !message.spokenSummary.isEmpty {
-                Label(message.spokenSummary, systemImage: "quote.bubble")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(8)
-                    .background(Color.secondary.opacity(0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .textSelection(.enabled)
+        HStack(alignment: .top) {
+            if message.role == .user {
+                Spacer(minLength: 80)
             }
 
-            if !message.references.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("References")
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .foregroundStyle(titleColor)
+                    Text(title)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    ForEach(message.references) { reference in
-                        Text("\(reference.source): \(reference.snippet)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
+                        .foregroundStyle(titleColor)
+                    Spacer(minLength: 0)
+                    Text(message.createdAt, style: .time)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
                 }
-                .padding(.top, 4)
+
+                Text(.init(message.content))
+                    .textSelection(.enabled)
+
+                if message.role == .assistant, !message.spokenSummary.isEmpty {
+                    Label(message.spokenSummary, systemImage: "quote.bubble")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(8)
+                        .background(Color.secondary.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .textSelection(.enabled)
+                }
+
+                if !message.references.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("References")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                        ForEach(message.references) { reference in
+                            Text("\(reference.source): \(reference.snippet)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: 860, alignment: .leading)
+            .background(background)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(borderColor, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            if message.role != .user {
+                Spacer(minLength: 80)
             }
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(background)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var title: String {
@@ -195,11 +192,27 @@ struct MessageBubble: View {
         }
     }
 
+    private var icon: String {
+        switch message.role {
+        case .assistant: "sparkles"
+        case .user: "person.crop.circle"
+        case .system: "gearshape"
+        }
+    }
+
     private var background: Color {
         switch message.role {
-        case .assistant: Color.green.opacity(0.10)
-        case .user: Color.blue.opacity(0.10)
+        case .assistant: Color.green.opacity(0.09)
+        case .user: Color.blue.opacity(0.12)
         case .system: Color.secondary.opacity(0.10)
+        }
+    }
+
+    private var borderColor: Color {
+        switch message.role {
+        case .assistant: Color.green.opacity(0.18)
+        case .user: Color.blue.opacity(0.20)
+        case .system: Color.secondary.opacity(0.15)
         }
     }
 }

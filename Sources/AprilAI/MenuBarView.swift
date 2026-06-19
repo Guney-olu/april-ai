@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MenuBarView: View {
@@ -6,13 +7,7 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("April AI")
-                        .font(.headline)
-                    Text("Ask. Get challenged. Move.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                AppIdentityHeader()
                 Spacer()
                 if state.isBusy {
                     ProgressView()
@@ -56,16 +51,13 @@ struct MenuBarView: View {
             .buttonStyle(.bordered)
 
             HStack(spacing: 7) {
-                Circle()
-                    .fill(state.liveSession.isConnected ? Color.green : Color.secondary)
-                    .frame(width: 7, height: 7)
-                Text(state.liveSession.isConnected ? "Live ready" : "Live opens on Talk")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                StatusPill(
+                    title: state.liveSession.isConnected ? "Live" : "Idle",
+                    systemImage: state.liveSession.isConnected ? "bolt.fill" : "moon",
+                    color: state.liveSession.isConnected ? .green : .secondary
+                )
                 if state.isLiveScreenSharing {
-                    Text("Screen")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
+                    StatusPill(title: "Screen", systemImage: "rectangle.on.rectangle", color: .orange)
                 }
                 Spacer()
                 if state.liveSession.sentAudioChunkCount > 0 {
