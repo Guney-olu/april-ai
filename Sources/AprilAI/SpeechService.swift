@@ -13,6 +13,9 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private var liveEngineConfigured = false
     private var pendingLiveBuffers = 0
     private var playbackGeneration = 0
+    private var lastLiveAudioAt = Date.distantPast
+    private var estimatedLivePlaybackEndAt = Date.distantPast
+    private var livePlaybackWatchdog: Task<Void, Never>?
 
     var onOutputActivityChanged: ((Bool) -> Void)?
 
@@ -52,8 +55,12 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         }
 
         let generation = playbackGeneration
+        lastLiveAudioAt = Date()
+        let duration = Double(buffer.frameLength) / liveFormat.sampleRate
+        estimatedLivePlaybackEndAt = max(Date(), estimatedLivePlaybackEndAt).addingTimeInterval(duration)
         pendingLiveBuffers += 1
         setOutputActive(true)
+        scheduleLivePlaybackWatchdog(generation: generation)
 
         livePlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor in
@@ -81,6 +88,9 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             livePlayer.stop()
         }
         pendingLiveBuffers = 0
+        estimatedLivePlaybackEndAt = .distantPast
+        livePlaybackWatchdog?.cancel()
+        livePlaybackWatchdog = nil
         setOutputActive(false)
     }
 
@@ -135,6 +145,36 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         if isSpeaking != active {
             isSpeaking = active
             onOutputActivityChanged?(active)
+        }
+    }
+
+    private func scheduleLivePlaybackWatchdog(generation: Int) {
+        livePlaybackWatchdog?.cancel()
+        let wakeAt = estimatedLivePlaybackEndAt.addingTimeInterval(1.0)
+        livePlaybackWatchdog = Task { [weak self] in
+            let delay = max(1.0, wakeAt.timeIntervalSinceNow)
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return
+            }
+
+            await MainActor.run {
+                guard let self else { return }
+                guard generation == self.playbackGeneration else { return }
+                guard Date().timeIntervalSince(self.lastLiveAudioAt) >= 1.0 else {
+                    self.scheduleLivePlaybackWatchdog(generation: generation)
+                    return
+                }
+                guard Date() >= self.estimatedLivePlaybackEndAt.addingTimeInterval(0.6) else {
+                    self.scheduleLivePlaybackWatchdog(generation: generation)
+                    return
+                }
+                if self.pendingLiveBuffers > 0, !self.livePlayer.isPlaying {
+                    self.pendingLiveBuffers = 0
+                    self.setOutputActive(false)
+                }
+            }
         }
     }
 

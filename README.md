@@ -16,6 +16,14 @@ To rebuild that app bundle after code changes:
 ./scripts/make-app.sh
 ```
 
+For new versions or local updates, use the reset flag so macOS privacy permissions do not get stuck on an old ad-hoc build identity:
+
+```bash
+./scripts/make-app.sh --reset-permissions
+```
+
+Then reopen April AI and grant Accessibility, Microphone, and Screen Recording again from Settings if macOS asks. Local dev builds are ad-hoc signed, and macOS privacy can keep stale permission records after rebuilds.
+
 From this folder:
 
 ```bash
@@ -75,6 +83,7 @@ You can choose another folder from the **Context** or **Settings** screen.
 - PDF and text extraction from `context/inbox`.
 - SQLite FTS5 local search index.
 - Automatic local session memory saving, plus manual memory saving and delete controls.
+- Local JSONL Live-session logs in `context/logs/` for Live status, socket events, tool calls, tool inputs, and tool outputs.
 - Research reports saved to `context/research`.
 
 ## Local Control
@@ -102,6 +111,8 @@ The Live mic path keeps CoreAudio's realtime callback away from SwiftUI/MainActo
 Gemini Live audio-video sessions can be shorter than audio-only sessions. April AI enables context-window compression, listens for Live session rotation signals, and retries transient screen-frame failures so screen sharing does not immediately kill the conversation.
 
 Live also exposes custom function tools. The model can search approved local memories, save safe durable memories, run grounded Google Search through a separate REST call, and use scoped local-control actions. The memory write tool rejects high-sensitivity or secret-looking content; manual deletion remains in the **Memory** tab.
+
+Each Live session writes a JSONL log file under `context/logs/`. Open it from **Settings > Context > Open Logs** when diagnosing Live behavior. Logs summarize socket traffic and media payload sizes rather than storing raw audio/video frames.
 
 ## Memory
 

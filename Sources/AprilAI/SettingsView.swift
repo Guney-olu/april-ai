@@ -152,6 +152,9 @@ struct SettingsView: View {
                             Button("Open") {
                                 state.openContextFolder()
                             }
+                            Button("Open Logs") {
+                                state.openLogsFolder()
+                            }
                             Button("Choose") {
                                 state.chooseContextFolder()
                             }

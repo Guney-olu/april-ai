@@ -4,11 +4,27 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT_DIR="$(cd "$PROJECT_DIR/.." && pwd)"
 APP_NAME="AprilAI"
+BUNDLE_ID="com.local.aprilai"
 APP_DIR="$OUTPUT_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 EXECUTABLE="$PROJECT_DIR/.build/debug/$APP_NAME"
+RESET_PERMISSIONS=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --reset-permissions)
+      RESET_PERMISSIONS=1
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      echo "Usage: $0 [--reset-permissions]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 cd "$PROJECT_DIR"
 swift build
@@ -23,7 +39,7 @@ fi
 
 /usr/bin/plutil -create xml1 "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleExecutable -string "$APP_NAME" "$CONTENTS_DIR/Info.plist"
-/usr/bin/plutil -insert CFBundleIdentifier -string "com.local.aprilai" "$CONTENTS_DIR/Info.plist"
+/usr/bin/plutil -insert CFBundleIdentifier -string "$BUNDLE_ID" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleName -string "April AI" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleDisplayName -string "April AI" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleIconFile -string "AprilAI.icns" "$CONTENTS_DIR/Info.plist"
@@ -41,6 +57,10 @@ printf "APPL????" > "$CONTENTS_DIR/PkgInfo"
 
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$APP_DIR" >/dev/null
+fi
+
+if [[ "$RESET_PERMISSIONS" -eq 1 ]]; then
+  "$PROJECT_DIR/scripts/reset-permissions.sh" "$BUNDLE_ID"
 fi
 
 echo "$APP_DIR"

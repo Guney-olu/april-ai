@@ -34,6 +34,7 @@ final class AppState: ObservableObject {
     let accessibilityControl = AccessibilityControlService()
 
     private let keychain = KeychainStore()
+    private var interactionLogger: InteractionLogger?
     private var liveToolExecutor: LiveToolExecutor!
     private var liveScreenShareTask: Task<Void, Never>?
     private var autoMemoryTask: Task<Void, Never>?
@@ -52,7 +53,6 @@ final class AppState: ObservableObject {
         } catch {
             fatalError("Could not create context library: \(error.localizedDescription)")
         }
-
         apiKeyInput = keychain.readAPIKey()
         settings.apiKeyStored = !apiKeyInput.isEmpty
         settings.save()
@@ -108,6 +108,10 @@ final class AppState: ObservableObject {
 
     func openContextFolder() {
         NSWorkspace.shared.open(context.rootURL)
+    }
+
+    func openLogsFolder() {
+        NSWorkspace.shared.open(context.logsURL)
     }
 
     func chooseContextFolder() {
@@ -239,6 +243,8 @@ final class AppState: ObservableObject {
         guard !liveSession.isConnected else { return }
         do {
             status = "Opening Live session..."
+            startLiveInteractionLogIfNeeded()
+            logInteraction("live_connect_requested")
             try await liveSession.connect(
                 apiKey: apiKeyInput,
                 model: settings.liveModel,
@@ -247,6 +253,7 @@ final class AppState: ObservableObject {
             )
             try? await refreshLiveMemoryContext(silent: true)
         } catch {
+            logInteraction("live_connect_failed", ["error": error.localizedDescription])
             messages.append(ChatMessage(role: .system, content: error.localizedDescription))
             status = error.localizedDescription
         }
@@ -320,6 +327,7 @@ final class AppState: ObservableObject {
     }
 
     func disconnectLive() {
+        logInteraction("live_disconnect_button")
         stopLiveScreenShare(notify: false)
         liveSession.disconnect()
         speech.stop()
@@ -532,21 +540,31 @@ final class AppState: ObservableObject {
 
     private func configureLiveSessionCallbacks() {
         liveSession.onStatus = { [weak self] message in
-            Task { @MainActor in self?.status = message }
+            Task { @MainActor in
+                self?.status = message
+                self?.logInteraction("live_status", ["message": message])
+            }
         }
 
         speech.onOutputActivityChanged = { [weak self] active in
-            Task { @MainActor in self?.liveSession.setOutputSuppression(active) }
+            Task { @MainActor in
+                self?.logInteraction("speech_output_activity", ["active": active])
+                self?.liveSession.setOutputSuppression(active)
+            }
         }
 
         liveSession.onAudio = { [weak self] pcm in
-            Task { @MainActor in self?.speech.enqueueLivePCM16(pcm) }
+            Task { @MainActor in
+                self?.logInteraction("live_audio_enqueue", ["bytes": pcm.count])
+                self?.speech.enqueueLivePCM16(pcm)
+            }
         }
 
         liveSession.onInterrupted = { [weak self] in
             Task { @MainActor in
                 self?.speech.stop()
                 self?.status = "Live interrupted. Listening for the new turn."
+                self?.logInteraction("live_interrupted")
             }
         }
 
@@ -565,6 +583,7 @@ final class AppState: ObservableObject {
                     guard !self.speech.isSpeaking else { return }
                     self.appendMessage(ChatMessage(role: .user, content: trimmed))
                 }
+                self.logInteraction("live_transcript", ["role": role, "text": trimmed])
             }
         }
 
@@ -572,12 +591,26 @@ final class AppState: ObservableObject {
             Task { @MainActor in
                 self?.stopLiveScreenShare(notify: false)
                 self?.messages.append(ChatMessage(role: .system, content: message))
+                self?.logInteraction("live_error_callback", ["message": message])
             }
         }
 
         liveSession.onToolCall = { [weak self] calls in
             guard let self else { return [] }
-            return await self.liveToolExecutor.execute(calls)
+            self.logInteraction("tool_call_start", [
+                "count": calls.count,
+                "calls": calls.map { ["id": $0.id, "name": $0.name, "args": $0.args] }
+            ])
+            let responses = await self.liveToolExecutor.execute(calls)
+            self.logInteraction("tool_call_end", [
+                "count": responses.count,
+                "responses": responses.map { ["id": $0.id, "name": $0.name, "response": $0.response] }
+            ])
+            return responses
+        }
+
+        liveSession.onLog = { [weak self] event, payload in
+            Task { @MainActor in self?.logInteraction(event, payload) }
         }
     }
 
@@ -631,9 +664,25 @@ final class AppState: ObservableObject {
 
     private func appendMessage(_ message: ChatMessage) {
         messages.append(message)
+        logInteraction("chat_message", [
+            "role": message.role.rawValue,
+            "content": message.content,
+            "spoken_summary": message.spokenSummary,
+            "references": message.references.map { ["source": $0.source, "snippet": $0.snippet] }
+        ])
         if message.role == .user || message.role == .assistant {
             recordSessionTurn(role: message.role, content: message.content)
         }
+    }
+
+    private func logInteraction(_ event: String, _ payload: [String: Any] = [:]) {
+        interactionLogger?.log(event, payload)
+    }
+
+    private func startLiveInteractionLogIfNeeded() {
+        guard interactionLogger == nil else { return }
+        interactionLogger = try? InteractionLogger(logsURL: context.logsURL)
+        logInteraction("live_log_started", ["context_root": context.rootURL.path])
     }
 
     private func recordSessionTurn(role: ChatRole, content: String) {

@@ -31,6 +31,7 @@ final class ContextLibrary: ObservableObject {
     var inboxURL: URL { rootURL.appending(path: "inbox") }
     var memoryURL: URL { rootURL.appending(path: "memory") }
     var researchURL: URL { rootURL.appending(path: "research") }
+    var logsURL: URL { rootURL.appending(path: "logs") }
     private var memoriesURL: URL { memoryURL.appending(path: "memories.json") }
     private var approvedMemoriesURL: URL { memoryURL.appending(path: "approved_memories.json") }
     private var reportsURL: URL { researchURL.appending(path: "reports.json") }
@@ -307,7 +308,7 @@ final class ContextLibrary: ObservableObject {
     }
 
     private static func ensureFolderTree(at root: URL) throws {
-        for folder in ["inbox", "memory", "research", "index"] {
+        for folder in ["inbox", "memory", "research", "index", "logs"] {
             try FileManager.default.createDirectory(
                 at: root.appending(path: folder),
                 withIntermediateDirectories: true

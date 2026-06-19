@@ -63,15 +63,17 @@ struct StatusBar: View {
                 StatusPill(
                     title: state.liveSession.isConnected ? "Live" : "Idle",
                     systemImage: state.liveSession.isConnected ? "bolt.fill" : "moon",
-                    color: state.liveSession.isConnected ? .green : .secondary
+                    color: state.liveSession.isConnected ? .green : .secondary,
+                    compact: true
                 )
                 if state.isLiveScreenSharing {
-                    StatusPill(title: "Screen", systemImage: "rectangle.on.rectangle", color: .orange)
+                    StatusPill(title: "Screen", systemImage: "rectangle.on.rectangle", color: .orange, compact: true)
                 }
                 if state.liveSession.isStreamingMic {
-                    StatusPill(title: "Mic", systemImage: "mic.fill", color: .green)
+                    StatusPill(title: "Mic", systemImage: "mic.fill", color: .green, compact: true)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if state.isBusy {
                 ProgressView()
@@ -116,14 +118,27 @@ struct StatusPill: View {
     let title: String
     let systemImage: String
     let color: Color
+    var compact = false
 
     var body: some View {
-        Label(title, systemImage: systemImage)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.13))
-            .clipShape(Capsule())
+        Group {
+            if compact {
+                Image(systemName: systemImage)
+                    .font(.caption.weight(.bold))
+                    .frame(width: 30, height: 24)
+            } else {
+                Label(title, systemImage: systemImage)
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+            }
+        }
+        .foregroundStyle(color)
+        .background(color.opacity(0.13))
+        .clipShape(Capsule())
+        .help(title)
     }
 }

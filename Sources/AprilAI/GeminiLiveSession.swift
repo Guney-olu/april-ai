@@ -15,6 +15,7 @@ final class GeminiLiveSession: ObservableObject {
     var onError: ((String) -> Void)?
     var onInterrupted: (() -> Void)?
     var onToolCall: (@MainActor ([LiveToolFunctionCall]) async -> [LiveToolFunctionResponse])?
+    var onLog: ((String, [String: Any]) -> Void)?
 
     private var apiKey = ""
     private var model = AppSettings.defaultLiveModel
@@ -31,6 +32,8 @@ final class GeminiLiveSession: ObservableObject {
     private var sessionResumptionHandle = ""
     private var lastMemoryContext = ""
     private var cancelledToolCallIDs = Set<String>()
+    private var keepAliveTask: Task<Void, Never>?
+    private var lastServerEventAt = Date()
 
     func connect(apiKey: String, model: String, voice: String, systemInstruction: String) async throws {
         if isConnected, didSendSetup {
@@ -52,10 +55,12 @@ final class GeminiLiveSession: ObservableObject {
         }
 
         onStatus?("Opening Live socket...")
+        log("live_connect_start", ["model": self.model, "voice": self.voice])
         webSocketDelegate.prepareForOpen()
         webSocketDelegate.onClose = { [weak self] message in
             Task { @MainActor in
                 guard let self else { return }
+                self.stopKeepAlive()
                 self.forceStopMic()
                 self.webSocket = nil
                 self.audioSender.webSocket = nil
@@ -64,6 +69,7 @@ final class GeminiLiveSession: ObservableObject {
                 self.failPendingSetup(GeminiError.badResponse(message))
                 self.onStatus?(message)
                 self.onError?(message)
+                self.log("live_socket_closed", ["message": message])
             }
         }
 
@@ -75,9 +81,11 @@ final class GeminiLiveSession: ObservableObject {
         task.resume()
         try await webSocketDelegate.waitForOpen()
         isConnected = true
+        lastServerEventAt = Date()
         sentAudioChunkCount = 0
         didSendSetup = false
         receiveLoop()
+        startKeepAlive()
 
         onStatus?("Live socket open. Sending setup...")
         let setupConfig: [String: Any] = [
@@ -130,9 +138,12 @@ final class GeminiLiveSession: ObservableObject {
         didSendSetup = true
         audioSender.webSocket = task
         onStatus?("Live ready. Speak, then press Pause.")
+        log("live_ready", ["model": self.model])
     }
 
     func disconnect() {
+        log("live_disconnect_requested")
+        stopKeepAlive()
         stopMic()
         webSocket?.cancel(with: .goingAway, reason: nil)
         webSocket = nil
@@ -146,6 +157,7 @@ final class GeminiLiveSession: ObservableObject {
         shouldResumeMicAfterOutput = false
         failPendingSetup(GeminiError.badResponse("Live disconnected."))
         onStatus?("Live disconnected.")
+        log("live_disconnected")
     }
 
     func startMic() async throws {
@@ -173,6 +185,7 @@ final class GeminiLiveSession: ObservableObject {
             try audioEngine.start()
             isStreamingMic = true
             onStatus?("Live mic streaming.")
+            log("live_mic_started", ["sample_rate": format.sampleRate, "channels": format.channelCount])
         } catch {
             input.removeTap(onBus: 0)
             isStreamingMic = false
@@ -187,6 +200,7 @@ final class GeminiLiveSession: ObservableObject {
         isStreamingMic = false
         audioSender.sendAudioStreamEnd()
         onStatus?("Live mic paused. Waiting for Gemini...")
+        log("live_mic_stopped")
     }
 
     func setOutputSuppression(_ active: Bool) {
@@ -196,6 +210,7 @@ final class GeminiLiveSession: ObservableObject {
                 shouldResumeMicAfterOutput = true
                 forceStopMic()
                 onStatus?("Live playback active; mic paused to prevent feedback.")
+                log("live_mic_suppressed_for_output")
             }
             return
         }
@@ -209,6 +224,7 @@ final class GeminiLiveSession: ObservableObject {
                 try await self.startMic()
             } catch {
                 self.onError?(error.localizedDescription)
+                self.log("live_mic_resume_failed", ["error": error.localizedDescription])
             }
         }
     }
@@ -222,6 +238,7 @@ final class GeminiLiveSession: ObservableObject {
     }
 
     func sendVideoFrame(_ data: Data, mimeType: String) async throws {
+        log("live_video_frame_send", ["bytes": data.count, "mime_type": mimeType])
         try await sendJSON([
             "realtimeInput": [
                 "video": [
@@ -257,6 +274,7 @@ final class GeminiLiveSession: ObservableObject {
             ]
         ])
         onStatus?("Live memory context refreshed.")
+        log("live_memory_context_sent", ["characters": trimmed.count])
     }
 
     private func ensureMicrophoneAccess() async throws {
@@ -284,17 +302,20 @@ final class GeminiLiveSession: ObservableObject {
 
                 switch result {
                 case .success(let message):
+                    self.lastServerEventAt = Date()
                     self.handle(message)
                     if self.webSocket != nil {
                         self.receiveLoop()
                     }
                 case .failure(let error):
+                    self.stopKeepAlive()
                     self.forceStopMic()
                     self.isConnected = false
                     self.didSendSetup = false
                     self.audioSender.webSocket = nil
                     self.onStatus?("Live socket closed: \(error.localizedDescription)")
                     self.onError?("Live socket closed: \(error.localizedDescription)")
+                    self.log("live_receive_failed", ["error": error.localizedDescription])
                 }
             }
         }
@@ -323,13 +344,16 @@ final class GeminiLiveSession: ObservableObject {
             let data = text.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
+            log("live_inbound_unparsed", ["characters": text.count])
             return
         }
+        log("live_inbound", summarizeInbound(json))
 
         if let error = json["error"] as? [String: Any] {
             let message = (error["message"] as? String) ?? "\(error)"
             onStatus?("Live error: \(message)")
             onError?("Live error: \(message)")
+            log("live_error", ["message": message])
             failPendingSetup(GeminiError.badResponse(message))
             disconnect()
             return
@@ -341,6 +365,7 @@ final class GeminiLiveSession: ObservableObject {
             setupContinuation?.resume()
             setupContinuation = nil
             onStatus?("Live ready. Speak, then press Pause.")
+            log("live_setup_complete")
             return
         }
 
@@ -359,6 +384,7 @@ final class GeminiLiveSession: ObservableObject {
             {
                 lastInputTranscript = transcript
                 onTranscript?("You", transcript)
+                log("live_input_transcript", ["text": transcript])
             }
 
             if
@@ -368,6 +394,7 @@ final class GeminiLiveSession: ObservableObject {
             {
                 lastOutputTranscript += transcript
                 onTranscript?("Live", transcript)
+                log("live_output_transcript_delta", ["text": transcript])
             }
 
             if
@@ -381,6 +408,7 @@ final class GeminiLiveSession: ObservableObject {
                         let pcm = Data(base64Encoded: base64)
                     {
                         onAudio?(pcm)
+                        log("live_audio_received", ["bytes": pcm.count])
                     }
                 }
             }
@@ -388,9 +416,11 @@ final class GeminiLiveSession: ObservableObject {
             if let complete = serverContent["turnComplete"] as? Bool, complete {
                 if !lastOutputTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     onTranscript?("Assistant", lastOutputTranscript.trimmingCharacters(in: .whitespacesAndNewlines))
+                    log("live_assistant_turn_complete", ["text": lastOutputTranscript.trimmingCharacters(in: .whitespacesAndNewlines)])
                     lastOutputTranscript = ""
                 }
                 onStatus?("Live ready.")
+                log("live_turn_complete")
             }
         } else if let update = json["sessionResumptionUpdate"] as? [String: Any] {
             if
@@ -400,16 +430,19 @@ final class GeminiLiveSession: ObservableObject {
             {
                 sessionResumptionHandle = handle
                 onStatus?("Live session checkpoint saved.")
+                log("live_session_checkpoint", ["handle_length": handle.count])
             }
         } else if let goAway = json["goAway"] as? [String: Any] {
             let timeLeft = goAway["timeLeft"] as? String ?? "soon"
             onStatus?("Live server will rotate this socket \(timeLeft). Keep talking; reconnect is prepared.")
+            log("live_goaway", ["time_left": timeLeft])
         } else if let toolCall = json["toolCall"] as? [String: Any] {
             handleToolCall(toolCall)
         } else if let cancellation = json["toolCallCancellation"] as? [String: Any] {
             let ids = cancellation["ids"] as? [String] ?? []
             cancelledToolCallIDs.formUnion(ids)
             onStatus?("Live cancelled \(ids.count) tool call\(ids.count == 1 ? "" : "s").")
+            log("live_tool_cancelled", ["ids": ids])
         }
     }
 
@@ -433,6 +466,10 @@ final class GeminiLiveSession: ObservableObject {
 
         guard !calls.isEmpty else { return }
         onStatus?("Live requested \(calls.count) tool call\(calls.count == 1 ? "" : "s").")
+        log("live_tool_call", [
+            "count": calls.count,
+            "calls": calls.map { ["id": $0.id, "name": $0.name, "args": $0.args] }
+        ])
 
         Task { @MainActor in
             let responses = await onToolCall(calls)
@@ -442,8 +479,13 @@ final class GeminiLiveSession: ObservableObject {
             do {
                 try await self.sendToolResponses(responses)
                 self.onStatus?("Live tool response sent.")
+                self.log("live_tool_response_sent", [
+                    "count": responses.count,
+                    "responses": responses.map { ["id": $0.id, "name": $0.name, "response": $0.response] }
+                ])
             } catch {
                 self.onError?("Live tool response failed: \(error.localizedDescription)")
+                self.log("live_tool_response_failed", ["error": error.localizedDescription])
             }
         }
     }
@@ -468,6 +510,7 @@ final class GeminiLiveSession: ObservableObject {
         }
         let data = try JSONSerialization.data(withJSONObject: object)
         let text = String(data: data, encoding: .utf8) ?? "{}"
+        log("live_outbound", summarizeOutbound(object))
         try await webSocket.send(.string(text))
     }
 
@@ -487,6 +530,81 @@ final class GeminiLiveSession: ObservableObject {
     private func failPendingSetup(_ error: Error) {
         setupContinuation?.resume(throwing: error)
         setupContinuation = nil
+    }
+
+    private func startKeepAlive() {
+        stopKeepAlive()
+        keepAliveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: 20_000_000_000)
+                } catch {
+                    return
+                }
+
+                await MainActor.run {
+                    guard let self, self.isConnected, let webSocket = self.webSocket else { return }
+                    let idleSeconds = Date().timeIntervalSince(self.lastServerEventAt)
+                    self.log("live_keepalive_ping", ["idle_seconds": idleSeconds])
+                    webSocket.sendPing { error in
+                        Task { @MainActor in
+                            if let error {
+                                self.log("live_keepalive_failed", ["error": error.localizedDescription])
+                                self.onError?("Live keepalive failed: \(error.localizedDescription)")
+                                self.disconnect()
+                            } else {
+                                self.log("live_keepalive_pong", ["idle_seconds": idleSeconds])
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopKeepAlive() {
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
+    }
+
+    private func log(_ event: String, _ payload: [String: Any] = [:]) {
+        onLog?(event, payload)
+    }
+
+    private func summarizeInbound(_ object: [String: Any]) -> [String: Any] {
+        [
+            "keys": Array(object.keys).sorted(),
+            "summary": summarizeJSON(object)
+        ]
+    }
+
+    private func summarizeOutbound(_ object: [String: Any]) -> [String: Any] {
+        [
+            "keys": Array(object.keys).sorted(),
+            "summary": summarizeJSON(object)
+        ]
+    }
+
+    private func summarizeJSON(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [String: Any]()) { result, item in
+                if item.key == "data", let string = item.value as? String, string.count > 512 {
+                    result[item.key] = "[base64 \(string.count) chars]"
+                } else {
+                    result[item.key] = summarizeJSON(item.value)
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            return array.map(summarizeJSON)
+        }
+
+        if let string = value as? String, string.count > 1_000 {
+            return String(string.prefix(1_000)) + "...[truncated]"
+        }
+
+        return value
     }
 }
 
