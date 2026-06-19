@@ -68,7 +68,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                 guard generation == self.playbackGeneration else { return }
                 self.pendingLiveBuffers = max(0, self.pendingLiveBuffers - 1)
                 if self.pendingLiveBuffers == 0 {
-                    self.setOutputActive(false)
+                    self.scheduleLivePlaybackWatchdog(generation: generation)
                 }
             }
         }
@@ -170,9 +170,18 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                     self.scheduleLivePlaybackWatchdog(generation: generation)
                     return
                 }
-                if self.pendingLiveBuffers > 0, !self.livePlayer.isPlaying {
-                    self.pendingLiveBuffers = 0
+                if self.pendingLiveBuffers == 0 {
+                    self.estimatedLivePlaybackEndAt = .distantPast
                     self.setOutputActive(false)
+                } else if Date().timeIntervalSince(self.lastLiveAudioAt) >= 5 {
+                    self.pendingLiveBuffers = 0
+                    self.estimatedLivePlaybackEndAt = .distantPast
+                    if self.livePlayer.engine != nil {
+                        self.livePlayer.stop()
+                    }
+                    self.setOutputActive(false)
+                } else {
+                    self.scheduleLivePlaybackWatchdog(generation: generation)
                 }
             }
         }

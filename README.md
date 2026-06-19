@@ -96,7 +96,7 @@ Allowed local actions:
 - Search native macOS Accessibility trees, press exposed controls, focus elements, set values, and run menu actions without moving the cursor.
 - Move, click, double-click, right-click, and scroll the mouse as a fallback for browser/non-native surfaces.
 - Type text into the focused field.
-- Run a limited shortcut allowlist: copy, paste, cut, select all, undo, redo, find, open location, new/close/switch tab, close window, quit app, switch Space left/right, return, tab, escape, delete, and arrow keys.
+- Run safe keyboard shortcuts: named actions like copy, Spotlight, new tab, switch Space left/right, plus dynamic key/modifier combos such as Control+Right or Command+Space.
 
 Mouse fallback uses explicit coordinate spaces. Normalized `x/y` must be `0.0...1.0`; screenshot pixel coordinates must use `coordinate_space=image_pixels` with coordinates from the latest Live frame. April AI exposes a `screen_geometry` tool so the model can debug Retina/HiDPI scaling instead of guessing like a caffeinated spreadsheet.
 
@@ -124,4 +124,3 @@ April AI automatically reviews recent chat/live turns, saves useful durable memo
 - Speech output uses Gemini speech generation first, with macOS local speech only as a fallback if TTS fails.
 - Deep Research is implemented as a grounded Gemini research prompt with optional Google Search grounding and saved Markdown output.
 - Screen capture is on-demand only.
-- Exact copyrighted character impersonation and exact catchphrases are intentionally not used; the app uses an original brutal chaotic-scientist style.

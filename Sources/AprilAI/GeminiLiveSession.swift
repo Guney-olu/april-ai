@@ -55,11 +55,18 @@ final class GeminiLiveSession: ObservableObject {
         }
 
         onStatus?("Opening Live socket...")
-        log("live_connect_start", ["model": self.model, "voice": self.voice])
+        log("live_connect_start", [
+            "model": self.model,
+            "voice": self.voice,
+            "has_stale_session_resumption": !sessionResumptionHandle.isEmpty
+        ])
         webSocketDelegate.prepareForOpen()
         webSocketDelegate.onClose = { [weak self] message in
             Task { @MainActor in
                 guard let self else { return }
+                if self.looksLikeInvalidArgumentClose(message) {
+                    self.clearSessionResumptionHandle(reason: "invalid_argument_close")
+                }
                 self.stopKeepAlive()
                 self.forceStopMic()
                 self.webSocket = nil
@@ -88,7 +95,7 @@ final class GeminiLiveSession: ObservableObject {
         startKeepAlive()
 
         onStatus?("Live socket open. Sending setup...")
-        let setupConfig: [String: Any] = [
+        var setupConfig: [String: Any] = [
             "model": "models/\(self.model)",
             "generationConfig": [
                 "responseModalities": ["AUDIO"],
@@ -123,12 +130,16 @@ final class GeminiLiveSession: ObservableObject {
             "contextWindowCompression": [
                 "slidingWindow": [:]
             ],
-            "sessionResumption": sessionResumptionHandle.isEmpty
-                ? [:]
-                : ["handle": sessionResumptionHandle],
             "inputAudioTranscription": [:],
             "outputAudioTranscription": [:]
         ]
+
+        // Gemini can reject stale Live resumption handles with 1007 after a manual restart.
+        // Keep the latest handle for diagnostics, but start user-triggered sessions clean.
+        if !sessionResumptionHandle.isEmpty {
+            setupConfig["sessionResumption"] = nil
+            log("live_session_resumption_skipped", ["reason": "manual_restart", "handle_length": sessionResumptionHandle.count])
+        }
         let setupMessage: [String: Any] = ["setup": setupConfig]
 
         try await waitForSetupComplete {
@@ -153,11 +164,19 @@ final class GeminiLiveSession: ObservableObject {
         didSendSetup = false
         lastMemoryContext = ""
         cancelledToolCallIDs.removeAll()
+        clearSessionResumptionHandle(reason: "manual_disconnect")
         outputSuppressionActive = false
         shouldResumeMicAfterOutput = false
         failPendingSetup(GeminiError.badResponse("Live disconnected."))
         onStatus?("Live disconnected.")
         log("live_disconnected")
+    }
+
+    func clearSessionResumptionHandle(reason: String) {
+        guard !sessionResumptionHandle.isEmpty else { return }
+        let previousLength = sessionResumptionHandle.count
+        sessionResumptionHandle = ""
+        log("live_session_resumption_cleared", ["reason": reason, "previous_handle_length": previousLength])
     }
 
     func startMic() async throws {
@@ -327,6 +346,11 @@ final class GeminiLiveSession: ObservableObject {
             audioEngine.stop()
         }
         isStreamingMic = false
+    }
+
+    private func looksLikeInvalidArgumentClose(_ message: String) -> Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("1007") || normalized.contains("invalid argument")
     }
 
     private func handle(_ message: URLSessionWebSocketTask.Message) {

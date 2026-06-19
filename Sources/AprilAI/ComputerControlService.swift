@@ -155,35 +155,37 @@ final class ComputerControlService {
 
     func pressKey(_ key: String, modifiers: [String]) -> ComputerControlResult {
         guard ensureAccessibility() else { return accessibilityFailure() }
-        guard let keyCode = keyCode(for: key, modifiers: modifiers) else {
-            return ComputerControlResult(ok: false, message: "Unsupported key. Allowed: return, tab, escape, delete, arrows, and cmd+l.")
+        guard let shortcut = shortcutFromKey(key, modifiers: modifiers) else {
+            return ComputerControlResult(ok: false, message: "Unsupported key/modifier combination.")
         }
 
-        let normalizedModifiers = Set(modifiers.map { $0.lowercased() })
-        let flags = eventFlags(for: normalizedModifiers)
-        postKey(keyCode, flags: flags)
-        return ComputerControlResult(ok: true, message: "Key pressed.", metadata: ["key": key, "modifiers": Array(normalizedModifiers).sorted()])
+        postShortcut(shortcut)
+        return ComputerControlResult(ok: true, message: "Key pressed.", metadata: ["key": key, "modifiers": shortcut.modifierNames])
     }
 
-    func keyboardShortcut(_ action: String) -> ComputerControlResult {
+    func keyboardShortcut(_ action: String, key: String = "", modifiers: [String] = []) -> ComputerControlResult {
         guard ensureAccessibility() else { return accessibilityFailure() }
         let normalized = action
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "-", with: "_")
             .replacingOccurrences(of: " ", with: "_")
-        guard let shortcut = shortcut(for: normalized) else {
+        let shortcut = shortcut(for: normalized)
+            ?? shortcutFromActionPhrase(action)
+            ?? shortcutFromKey(key, modifiers: modifiers)
+
+        guard let shortcut else {
             return ComputerControlResult(
                 ok: false,
-                message: "Unsupported shortcut. Allowed: copy, paste, cut, select_all, undo, redo, find, open_location, new_tab, close_tab, next_tab, previous_tab, close_window, quit_app, space_left, space_right, return, tab, escape, delete, and arrows."
+                message: "Unsupported shortcut. Use a named action or provide key plus safe modifiers."
             )
         }
 
-        postKey(shortcut.keyCode, flags: shortcut.flags)
+        postShortcut(shortcut)
         return ComputerControlResult(
             ok: true,
             message: "Shortcut executed.",
-            metadata: ["action": normalized, "key_code": shortcut.keyCode, "modifiers": shortcut.modifierNames]
+            metadata: ["action": normalized, "key": shortcut.keyName, "key_code": shortcut.keyCode, "modifiers": shortcut.modifierNames]
         )
     }
 
@@ -374,64 +376,178 @@ final class ComputerControlService {
         let oldItems = pasteboard.pasteboardItems ?? []
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        postKey(9, flags: .maskCommand)
+        postShortcut(KeyboardShortcut(keyCode: 9, flags: .maskCommand, modifierNames: ["cmd"]))
         try? await Task.sleep(nanoseconds: 250_000_000)
         pasteboard.clearContents()
         pasteboard.writeObjects(oldItems)
     }
 
     private func postKey(_ keyCode: CGKeyCode, flags: CGEventFlags = []) {
-        let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)
+        let source = CGEventSource(stateID: .hidSystemState)
+        let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
         down?.flags = flags
         down?.post(tap: .cghidEventTap)
 
-        let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
         up?.flags = flags
         up?.post(tap: .cghidEventTap)
     }
 
-    private func keyCode(for key: String, modifiers: [String]) -> CGKeyCode? {
-        let normalized = key.lowercased()
-        let modifierSet = Set(modifiers.map { $0.lowercased() })
-        switch normalized {
-        case "return", "enter": return modifierSet.isEmpty ? 36 : nil
-        case "tab": return modifierSet.isEmpty ? 48 : nil
-        case "escape", "esc": return modifierSet.isEmpty ? 53 : nil
-        case "delete", "backspace": return modifierSet.isEmpty ? 51 : nil
-        case "left", "arrowleft", "left_arrow": return modifierSet.isEmpty ? 123 : nil
-        case "right", "arrowright", "right_arrow": return modifierSet.isEmpty ? 124 : nil
-        case "down", "arrowdown", "down_arrow": return modifierSet.isEmpty ? 125 : nil
-        case "up", "arrowup", "up_arrow": return modifierSet.isEmpty ? 126 : nil
-        case "l" where modifierSet == ["cmd"] || modifierSet == ["command"]: return 37
-        default: return nil
+    private func postShortcut(_ shortcut: KeyboardShortcut) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let modifierCodes = shortcut.modifierNames.compactMap(modifierKeyCode)
+        var activeFlags: CGEventFlags = []
+        for modifier in shortcut.modifierNames {
+            guard let code = modifierKeyCode(modifier), let flag = modifierFlag(modifier) else { continue }
+            activeFlags.insert(flag)
+            let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true)
+            event?.flags = activeFlags
+            event?.post(tap: .cghidEventTap)
+        }
+
+        Thread.sleep(forTimeInterval: modifierCodes.isEmpty ? 0 : 0.035)
+        postKey(shortcut.keyCode, flags: shortcut.flags)
+        Thread.sleep(forTimeInterval: modifierCodes.isEmpty ? 0 : 0.035)
+
+        for modifier in shortcut.modifierNames.reversed() {
+            guard let code = modifierKeyCode(modifier), let flag = modifierFlag(modifier) else { continue }
+            activeFlags.remove(flag)
+            let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
+            event?.flags = activeFlags
+            event?.post(tap: .cghidEventTap)
         }
     }
 
     private func shortcut(for action: String) -> KeyboardShortcut? {
         switch action {
-        case "copy": return KeyboardShortcut(keyCode: 8, flags: .maskCommand, modifierNames: ["cmd"])
-        case "paste": return KeyboardShortcut(keyCode: 9, flags: .maskCommand, modifierNames: ["cmd"])
-        case "cut": return KeyboardShortcut(keyCode: 7, flags: .maskCommand, modifierNames: ["cmd"])
-        case "select_all": return KeyboardShortcut(keyCode: 0, flags: .maskCommand, modifierNames: ["cmd"])
-        case "undo": return KeyboardShortcut(keyCode: 6, flags: .maskCommand, modifierNames: ["cmd"])
-        case "redo": return KeyboardShortcut(keyCode: 6, flags: [.maskCommand, .maskShift], modifierNames: ["cmd", "shift"])
-        case "find", "search": return KeyboardShortcut(keyCode: 3, flags: .maskCommand, modifierNames: ["cmd"])
-        case "open_location", "address_bar": return KeyboardShortcut(keyCode: 37, flags: .maskCommand, modifierNames: ["cmd"])
-        case "new_tab": return KeyboardShortcut(keyCode: 17, flags: .maskCommand, modifierNames: ["cmd"])
-        case "close_tab", "close_window": return KeyboardShortcut(keyCode: 13, flags: .maskCommand, modifierNames: ["cmd"])
-        case "next_tab": return KeyboardShortcut(keyCode: 48, flags: .maskControl, modifierNames: ["control"])
-        case "previous_tab": return KeyboardShortcut(keyCode: 48, flags: [.maskControl, .maskShift], modifierNames: ["control", "shift"])
-        case "quit_app": return KeyboardShortcut(keyCode: 12, flags: .maskCommand, modifierNames: ["cmd"])
-        case "space_left", "screen_left": return KeyboardShortcut(keyCode: 123, flags: .maskControl, modifierNames: ["control"])
-        case "space_right", "screen_right": return KeyboardShortcut(keyCode: 124, flags: .maskControl, modifierNames: ["control"])
-        case "return", "enter": return KeyboardShortcut(keyCode: 36, flags: [], modifierNames: [])
-        case "tab": return KeyboardShortcut(keyCode: 48, flags: [], modifierNames: [])
-        case "escape", "esc": return KeyboardShortcut(keyCode: 53, flags: [], modifierNames: [])
-        case "delete", "backspace": return KeyboardShortcut(keyCode: 51, flags: [], modifierNames: [])
-        case "left", "arrow_left", "left_arrow": return KeyboardShortcut(keyCode: 123, flags: [], modifierNames: [])
-        case "right", "arrow_right", "right_arrow": return KeyboardShortcut(keyCode: 124, flags: [], modifierNames: [])
-        case "down", "arrow_down", "down_arrow": return KeyboardShortcut(keyCode: 125, flags: [], modifierNames: [])
-        case "up", "arrow_up", "up_arrow": return KeyboardShortcut(keyCode: 126, flags: [], modifierNames: [])
+        case "copy": return shortcutFromKey("c", modifiers: ["cmd"])
+        case "paste": return shortcutFromKey("v", modifiers: ["cmd"])
+        case "cut": return shortcutFromKey("x", modifiers: ["cmd"])
+        case "select_all": return shortcutFromKey("a", modifiers: ["cmd"])
+        case "undo": return shortcutFromKey("z", modifiers: ["cmd"])
+        case "redo": return shortcutFromKey("z", modifiers: ["cmd", "shift"])
+        case "find", "search": return shortcutFromKey("f", modifiers: ["cmd"])
+        case "spotlight", "cmd_space", "command_space": return shortcutFromKey("space", modifiers: ["cmd"])
+        case "open_location", "address_bar": return shortcutFromKey("l", modifiers: ["cmd"])
+        case "new_tab": return shortcutFromKey("t", modifiers: ["cmd"])
+        case "close_tab", "close_window": return shortcutFromKey("w", modifiers: ["cmd"])
+        case "next_tab": return shortcutFromKey("tab", modifiers: ["control"])
+        case "previous_tab": return shortcutFromKey("tab", modifiers: ["control", "shift"])
+        case "quit_app": return shortcutFromKey("q", modifiers: ["cmd"])
+        case "space_left", "screen_left": return shortcutFromKey("left", modifiers: ["control"])
+        case "space_right", "screen_right": return shortcutFromKey("right", modifiers: ["control"])
+        case "return", "enter": return shortcutFromKey("return", modifiers: [])
+        case "tab": return shortcutFromKey("tab", modifiers: [])
+        case "escape", "esc": return shortcutFromKey("escape", modifiers: [])
+        case "delete", "backspace": return shortcutFromKey("delete", modifiers: [])
+        case "left", "arrow_left", "left_arrow": return shortcutFromKey("left", modifiers: [])
+        case "right", "arrow_right", "right_arrow": return shortcutFromKey("right", modifiers: [])
+        case "down", "arrow_down", "down_arrow": return shortcutFromKey("down", modifiers: [])
+        case "up", "arrow_up", "up_arrow": return shortcutFromKey("up", modifiers: [])
+        default: return nil
+        }
+    }
+
+    private func shortcutFromActionPhrase(_ phrase: String) -> KeyboardShortcut? {
+        let cleaned = phrase
+            .lowercased()
+            .replacingOccurrences(of: " plus ", with: "+")
+            .replacingOccurrences(of: " key", with: "")
+            .replacingOccurrences(of: "arrow", with: "")
+            .replacingOccurrences(of: "command", with: "cmd")
+            .replacingOccurrences(of: "control", with: "ctrl")
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "-", with: "+")
+        let parts = cleaned
+            .split(separator: "+")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        guard parts.count >= 2, let key = parts.last else { return nil }
+        return shortcutFromKey(key, modifiers: Array(parts.dropLast()))
+    }
+
+    private func shortcutFromKey(_ key: String, modifiers: [String]) -> KeyboardShortcut? {
+        let normalizedKey = normalizedKeyName(key)
+        let normalizedModifiers = normalizedModifierNames(modifiers)
+        guard let keyCode = keyCode(for: normalizedKey) else { return nil }
+        guard shortcutIsAllowed(key: normalizedKey, modifiers: normalizedModifiers) else { return nil }
+        return KeyboardShortcut(
+            keyName: normalizedKey,
+            keyCode: keyCode,
+            flags: eventFlags(for: Set(normalizedModifiers)),
+            modifierNames: normalizedModifiers
+        )
+    }
+
+    private func normalizedKeyName(_ key: String) -> String {
+        key.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "arrow", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+    }
+
+    private func normalizedModifierNames(_ modifiers: [String]) -> [String] {
+        var seen: Set<String> = []
+        var output: [String] = []
+        for modifier in modifiers {
+            let normalized: String
+            switch modifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "cmd", "command", "⌘": normalized = "cmd"
+            case "ctrl", "control", "⌃": normalized = "control"
+            case "shift", "⇧": normalized = "shift"
+            case "option", "alt", "⌥": normalized = "option"
+            default: continue
+            }
+            if !seen.contains(normalized) {
+                seen.insert(normalized)
+                output.append(normalized)
+            }
+        }
+        return output
+    }
+
+    private func shortcutIsAllowed(key: String, modifiers: [String]) -> Bool {
+        let modifierSet = Set(modifiers)
+        guard modifierSet.isSubset(of: ["cmd", "control", "shift", "option"]) else { return false }
+        if ["delete", "backspace"].contains(key), !modifierSet.isEmpty {
+            return false
+        }
+        if ["return", "enter"].contains(key), modifierSet.contains("cmd") || modifierSet.contains("control") {
+            return false
+        }
+        return keyCode(for: key) != nil
+    }
+
+    private func keyCode(for key: String) -> CGKeyCode? {
+        let table: [String: CGKeyCode] = [
+            "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
+            "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19,
+            "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28,
+            "0": 29, "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "return": 36,
+            "enter": 36, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43,
+            "/": 44, "n": 45, "m": 46, ".": 47, "tab": 48, "space": 49, "`": 50, "delete": 51,
+            "backspace": 51, "escape": 53, "esc": 53, "left": 123, "right": 124, "down": 125, "up": 126
+        ]
+        return table[key]
+    }
+
+    private func modifierKeyCode(_ name: String) -> CGKeyCode? {
+        switch name.lowercased() {
+        case "cmd", "command": return 55
+        case "shift": return 56
+        case "control", "ctrl": return 59
+        case "option", "alt": return 58
+        default: return nil
+        }
+    }
+
+    private func modifierFlag(_ name: String) -> CGEventFlags? {
+        switch name.lowercased() {
+        case "cmd", "command": return .maskCommand
+        case "shift": return .maskShift
+        case "control", "ctrl": return .maskControl
+        case "option", "alt": return .maskAlternate
         default: return nil
         }
     }
@@ -535,6 +651,7 @@ final class ComputerControlService {
 }
 
 private struct KeyboardShortcut {
+    var keyName = ""
     let keyCode: CGKeyCode
     let flags: CGEventFlags
     let modifierNames: [String]

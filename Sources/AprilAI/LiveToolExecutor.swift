@@ -184,13 +184,14 @@ final class LiveToolExecutor {
         ],
         [
             "name": "keyboard_shortcut",
-            "description": "Run one allowlisted keyboard shortcut without an extra approval dialog. Use only for reversible local UI control.",
+            "description": "Run one safe keyboard shortcut without an extra approval dialog. Use a named action or provide key plus modifiers. Use only for reversible local UI control.",
             "parameters": [
                 "type": "object",
                 "properties": [
-                    "action": ["type": "string", "description": "Allowed: copy, paste, cut, select_all, undo, redo, find, open_location, new_tab, close_tab, next_tab, previous_tab, close_window, quit_app, space_left, space_right, return, tab, escape, delete, left, right, up, down."]
-                ],
-                "required": ["action"]
+                    "action": ["type": "string", "description": "Optional named action: copy, paste, cut, select_all, undo, redo, find, spotlight, cmd_space, open_location, new_tab, close_tab, next_tab, previous_tab, close_window, quit_app, space_left, space_right, return, tab, escape, delete, left, right, up, down."],
+                    "key": ["type": "string", "description": "Optional key name for a dynamic shortcut, such as right, left, space, tab, a, c, l."],
+                    "modifiers": ["type": "array", "items": ["type": "string"], "description": "Optional modifiers for key: cmd, control, shift, option."]
+                ]
             ]
         ],
         [
@@ -397,7 +398,11 @@ final class LiveToolExecutor {
                         modifiers: stringArrayArg("modifiers", in: call.args)
                     ).toolResponse
                 case "keyboard_shortcut":
-                    response = computerControl.keyboardShortcut(stringArg("action", in: call.args)).toolResponse
+                    response = computerControl.keyboardShortcut(
+                        stringArg("action", in: call.args),
+                        key: stringArg("key", in: call.args),
+                        modifiers: stringArrayArg("modifiers", in: call.args)
+                    ).toolResponse
                 case "open_application":
                     response = computerControl.openApplication(stringArg("app", in: call.args)).toolResponse
                 case "activate_application":

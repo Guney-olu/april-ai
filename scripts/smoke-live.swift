@@ -347,9 +347,10 @@ let toolDeclarations: [[String: Any]] = [
         "parameters": [
             "type": "object",
             "properties": [
-                "action": ["type": "string"]
-            ],
-            "required": ["action"]
+                "action": ["type": "string"],
+                "key": ["type": "string"],
+                "modifiers": ["type": "array", "items": ["type": "string"]]
+            ]
         ]
     ],
     [

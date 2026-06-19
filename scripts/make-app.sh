@@ -33,8 +33,8 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
-if [ -d "$PROJECT_DIR/Resources" ]; then
-  cp -R "$PROJECT_DIR/Resources/." "$RESOURCES_DIR/"
+if [ -f "$PROJECT_DIR/Assets/AprilAI.icns" ]; then
+  cp "$PROJECT_DIR/Assets/AprilAI.icns" "$RESOURCES_DIR/AprilAI.icns"
 fi
 
 /usr/bin/plutil -create xml1 "$CONTENTS_DIR/Info.plist"
