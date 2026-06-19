@@ -224,6 +224,12 @@ final class AppState: ObservableObject {
     }
 
     func lookAtScreen() {
+        refreshScreenCaptureTrust()
+        guard screenCaptureTrusted else {
+            status = "Screen Recording permission is required. Open Settings and request Screen Permission."
+            messages.append(ChatMessage(role: .system, content: status))
+            return
+        }
         send("Look at my screen and explain what matters. Challenge any obvious bad assumption or next-step confusion.", includeScreen: true)
     }
 
@@ -310,6 +316,13 @@ final class AppState: ObservableObject {
     func startOrStopLiveScreenShare() async {
         if isLiveScreenSharing {
             stopLiveScreenShare()
+            return
+        }
+
+        refreshScreenCaptureTrust()
+        guard screenCaptureTrusted else {
+            status = "Screen Recording permission is required before screen sharing. Open Settings and request Screen Permission."
+            messages.append(ChatMessage(role: .system, content: status))
             return
         }
 

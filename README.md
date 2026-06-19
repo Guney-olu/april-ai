@@ -64,7 +64,7 @@ You can choose another folder from the **Context** or **Settings** screen.
 - SwiftUI macOS app with full window and menu bar surface.
 - Gemini text/image/audio request client.
 - Gemini speech generation using `gemini-3.1-flash-tts-preview` with the `Aoede` voice.
-- Gemini Live WebSocket session using the saved Live model for lower-latency talk.
+- Gemini Live WebSocket session using the saved Live model for lower-latency talk, with `gemini-3.5-flash` available as a teacher model for harder control planning.
 - Fast text model option `gemini-3.1-flash-lite` in Settings.
 - Two-part assistant replies: a short spoken response and a full Markdown answer in chat.
 - Scoped local-control boundary with Accessibility-gated native app, mouse, and keyboard tools.
@@ -73,7 +73,7 @@ You can choose another folder from the **Context** or **Settings** screen.
 - Live mic streaming from the Talk button, with returned audio chunks played as they arrive.
 - Live screen sharing sends low-resolution JPEG frames into the active Gemini Live session.
 - Live sessions enable context-window compression and session resumption hints to reduce abrupt audio-video session termination.
-- Live custom tools for approved memory search, guarded memory saving, custom Google Search grounding, AX-first native app control, app opening/activation/quit, menu actions, mouse fallback, text typing, and allowlisted shortcuts.
+- Live custom tools for approved memory search, guarded memory saving, custom Google Search grounding, teacher-model control planning, AX-first native app control, app opening/activation/quit, menu actions, mouse fallback, text typing, and allowlisted shortcuts.
 - Local playback of Gemini-generated speech audio for short replies.
 - Local `context/` folder structure:
   - `inbox/`
@@ -98,7 +98,9 @@ Allowed local actions:
 - Type text into the focused field.
 - Run safe keyboard shortcuts: named actions like copy, Spotlight, new tab, switch Space left/right, plus dynamic key/modifier combos such as Control+Right or Command+Space.
 
-Mouse fallback uses explicit coordinate spaces. Normalized `x/y` must be `0.0...1.0`; screenshot pixel coordinates must use `coordinate_space=image_pixels` with coordinates from the latest Live frame. April AI exposes a `screen_geometry` tool so the model can debug Retina/HiDPI scaling instead of guessing like a caffeinated spreadsheet.
+Mouse fallback uses explicit coordinate spaces. Normalized `x/y` must be `0.0...1.0`; screenshot pixel coordinates must use `coordinate_space=image_pixels` with coordinates from the latest Live frame. April AI exposes `screen_geometry` and `mouse_calibration` tools so the model can inspect frame age, display geometry, before/after cursor positions, and correction offsets instead of guessing like a caffeinated spreadsheet.
+
+For complex app-control tasks, uncertain coordinates, or failed tool attempts, Live can call `teacher_plan_control`. That tool asks `gemini-3.5-flash` for a JSON control plan, but it does not execute actions by itself; the Live model still calls the normal scoped tools.
 
 Still blocked by design: deleting files, running shell commands, sending messages, buying things, scheduling events, changing security settings, typing secrets, or completing irreversible workflows.
 
@@ -110,7 +112,7 @@ The Live mic path keeps CoreAudio's realtime callback away from SwiftUI/MainActo
 
 Gemini Live audio-video sessions can be shorter than audio-only sessions. April AI enables context-window compression, listens for Live session rotation signals, and retries transient screen-frame failures so screen sharing does not immediately kill the conversation.
 
-Live also exposes custom function tools. The model can search approved local memories, save safe durable memories, run grounded Google Search through a separate REST call, and use scoped local-control actions. The memory write tool rejects high-sensitivity or secret-looking content; manual deletion remains in the **Memory** tab.
+Live also exposes custom function tools. The model can search approved local memories, save safe durable memories, run grounded Google Search through a separate REST call, ask the teacher model for hard control plans, and use scoped local-control actions. The memory write tool rejects high-sensitivity or secret-looking content; manual deletion remains in the **Memory** tab.
 
 Each Live session writes a JSONL log file under `context/logs/`. Open it from **Settings > Context > Open Logs** when diagnosing Live behavior. Logs summarize socket traffic and media payload sizes rather than storing raw audio/video frames.
 

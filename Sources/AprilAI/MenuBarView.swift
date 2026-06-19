@@ -4,14 +4,14 @@ import SwiftUI
 struct MenuBarView: View {
     @EnvironmentObject private var state: AppState
     private let columns = [
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10)
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8)
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                AppIdentityHeader(iconSize: 42, titleFont: .title3.weight(.bold))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                AppIdentityHeader(iconSize: 34, titleFont: .headline.weight(.bold))
                 Spacer()
                 if state.isBusy {
                     ProgressView()
@@ -22,9 +22,9 @@ struct MenuBarView: View {
             TextField("Ask fast. Think faster.", text: $state.draft)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { state.sendDraft() }
-                .controlSize(.large)
+                .controlSize(.regular)
 
-            LazyVGrid(columns: columns, spacing: 10) {
+            LazyVGrid(columns: columns, spacing: 8) {
                 MenuActionButton(
                     title: "Send",
                     systemImage: "paperplane.fill",
@@ -75,7 +75,7 @@ struct MenuBarView: View {
             Text(state.status)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .lineLimit(3)
+                .lineLimit(2)
 
             if state.liveSession.isStreamingMic {
                 Text("Speak, then press Pause.")
@@ -83,10 +83,10 @@ struct MenuBarView: View {
                     .foregroundStyle(.green)
             }
         }
-        .padding(18)
-        .frame(width: 392)
+        .padding(14)
+        .frame(width: 320)
         .background {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(
                     LinearGradient(
@@ -100,10 +100,10 @@ struct MenuBarView: View {
                     )
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .stroke(Color.white.opacity(0.13), lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(0.32), radius: 24, y: 12)
+                .shadow(color: .black.opacity(0.28), radius: 18, y: 9)
         }
         .padding(1)
     }
@@ -125,19 +125,19 @@ private struct MenuActionButton: View {
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(.callout.weight(.semibold))
+                .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, minHeight: 40)
-                .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .buttonStyle(.plain)
         .foregroundStyle(isProminent ? Color.white : Color.primary)
         .background {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(isProminent ? Color.accentColor : Color.white.opacity(0.08))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .stroke(Color.white.opacity(isProminent ? 0.16 : 0.1), lineWidth: 1)
                 )
         }

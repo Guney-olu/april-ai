@@ -106,11 +106,35 @@ final class LiveToolExecutor {
             ]
         ],
         [
+            "name": "teacher_plan_control",
+            "description": "Ask the stronger teacher model to plan a complex or failed local-control task. The teacher does not execute actions; it returns a safe tool-use plan.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "task": ["type": "string", "description": "The local-control task or recovery problem to plan."],
+                    "context": ["type": "string", "description": "Optional current screen/app/conversation context."],
+                    "available_tools": ["type": "array", "items": ["type": "string"], "description": "Optional tool names April is considering."],
+                    "last_error": ["type": "string", "description": "Optional failed tool result or error to recover from."]
+                ],
+                "required": ["task"]
+            ]
+        ],
+        [
             "name": "screen_geometry",
             "description": "Return the latest Live screen frame geometry, display bounds, backing scale factor, and current mouse position. Call this before mouse fallback when coordinate accuracy is uncertain.",
             "parameters": [
                 "type": "object",
                 "properties": [:]
+            ]
+        ],
+        [
+            "name": "mouse_calibration",
+            "description": "Inspect, reset, or sample the mouse calibration state used for coordinate correction. Use status before mouse fallback when targeting looks off.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "action": ["type": "string", "description": "status, reset, or sample_center."]
+                ]
             ]
         ],
         [
@@ -361,8 +385,12 @@ final class LiveToolExecutor {
                     response = try await saveMemory(args: call.args)
                 case "google_search":
                     response = try await googleSearch(args: call.args)
+                case "teacher_plan_control":
+                    response = try await teacherPlanControl(args: call.args)
                 case "screen_geometry":
                     response = computerControl.screenGeometry().toolResponse
+                case "mouse_calibration":
+                    response = computerControl.mouseCalibration(action: stringArg("action", in: call.args)).toolResponse
                 case "move_mouse":
                     response = computerControl.moveMouse(
                         x: doubleArg("x", in: call.args),
@@ -605,6 +633,62 @@ final class LiveToolExecutor {
         ]
     }
 
+    private func teacherPlanControl(args: [String: Any]) async throws -> [String: Any] {
+        let task = rawStringArg("task", in: args).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else {
+            return ["ok": false, "error": "task is required"]
+        }
+
+        let context = rawStringArg("context", in: args)
+        let lastError = rawStringArg("last_error", in: args)
+        let availableTools = stringArrayArg("available_tools", in: args)
+        var teacher = gemini()
+        teacher.model = AppSettings.defaultTeacherModel
+
+        let prompt = """
+        You are April AI's teacher model for local-control planning. You do not execute tools.
+        Return only strict JSON, no markdown.
+
+        Task:
+        \(task)
+
+        Context:
+        \(context.isEmpty ? "None." : context)
+
+        Available tools:
+        \(availableTools.isEmpty ? "Use April AI's existing memory, search, AX, keyboard, mouse, and screen_geometry tools." : availableTools.joined(separator: ", "))
+
+        Last error:
+        \(lastError.isEmpty ? "None." : lastError)
+
+        JSON schema:
+        {
+          "intent_summary": "short",
+          "recommended_sequence": [
+            {"tool": "tool_name", "reason": "why", "arguments": {"example": "value"}}
+          ],
+          "coordinate_strategy": "how to avoid bad mouse coordinates",
+          "shortcut_strategy": "keyboard approach or macOS limitation",
+          "risk_notes": ["short risk notes"],
+          "ask_user_if": ["conditions requiring clarification"]
+        }
+        """
+
+        let raw = try await teacher.generateText(
+            system: "Plan safe local-control tool usage. Return strict JSON only.",
+            prompt: prompt
+        )
+        let parsed = Self.parseJSONObject(raw)
+
+        return [
+            "ok": true,
+            "model": AppSettings.defaultTeacherModel,
+            "task": task,
+            "plan": parsed ?? ["raw": raw],
+            "parsed_json": parsed != nil
+        ]
+    }
+
     private func looksSensitive(_ text: String) -> Bool {
         let lower = text.lowercased()
         let blockedTerms = [
@@ -622,6 +706,33 @@ final class LiveToolExecutor {
             #"\b(?:\d[ -]*?){13,19}\b"#
         ]
         return patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+    }
+
+    private static func parseJSONObject(_ text: String) -> [String: Any]? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate: String
+        if trimmed.hasPrefix("```") {
+            candidate = trimmed
+                .replacingOccurrences(of: "```json", with: "")
+                .replacingOccurrences(of: "```", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if
+            let start = trimmed.firstIndex(of: "{"),
+            let end = trimmed.lastIndex(of: "}"),
+            start <= end
+        {
+            candidate = String(trimmed[start...end])
+        } else {
+            candidate = trimmed
+        }
+
+        guard
+            let data = candidate.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        return object
     }
 
     private func stringArg(_ key: String, in args: [String: Any]) -> String {

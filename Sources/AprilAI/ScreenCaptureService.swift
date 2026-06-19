@@ -49,7 +49,7 @@ enum ScreenCaptureService {
     }
 
     private static func captureMainDisplayCGImage(displayID: CGDirectDisplayID = CGMainDisplayID()) async throws -> CGImage {
-        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+        guard CGPreflightScreenCaptureAccess() else {
             throw CaptureError.permissionDenied
         }
 
@@ -116,7 +116,8 @@ enum ScreenCaptureService {
             sentImageWidth: sentImageWidth,
             sentImageHeight: sentImageHeight,
             logicalBounds: logicalBounds,
-            backingScaleFactor: Double(screen?.backingScaleFactor ?? 1)
+            backingScaleFactor: Double(screen?.backingScaleFactor ?? 1),
+            capturedAt: Date()
         )
     }
 

@@ -12,6 +12,30 @@ struct Geometry {
     let backingScaleFactor: Double
 }
 
+struct Calibration {
+    var sampleCount = 0
+    var correctionX = 0.0
+    var correctionY = 0.0
+
+    mutating func record(intended: CGPoint, actual: CGPoint) -> Double {
+        let dx = actual.x - intended.x
+        let dy = actual.y - intended.y
+        let distance = sqrt(dx * dx + dy * dy)
+        sampleCount += 1
+        if distance >= 2 {
+            correctionX = max(-80, min(80, correctionX * 0.7 - dx * 0.3))
+            correctionY = max(-80, min(80, correctionY * 0.7 - dy * 0.3))
+        }
+        return distance
+    }
+
+    mutating func reset() {
+        sampleCount = 0
+        correctionX = 0
+        correctionY = 0
+    }
+}
+
 func screenGeometryMetadata(_ geometry: Geometry, mouse: CGPoint) -> [String: Any] {
     [
         "display_id": geometry.displayID,
@@ -113,6 +137,19 @@ guard
     metadata["backing_scale_factor"] as? Double == 2
 else {
     fputs("FAIL screen geometry metadata missing expected values\n", stderr)
+    exit(1)
+}
+
+var calibration = Calibration()
+let error = calibration.record(intended: CGPoint(x: 100, y: 100), actual: CGPoint(x: 110, y: 94))
+assertClose(error, 11.661903789690601, "calibration error")
+guard calibration.sampleCount == 1, calibration.correctionX < 0, calibration.correctionY > 0 else {
+    fputs("FAIL calibration correction did not move opposite observed drift\n", stderr)
+    exit(1)
+}
+calibration.reset()
+guard calibration.sampleCount == 0, calibration.correctionX == 0, calibration.correctionY == 0 else {
+    fputs("FAIL calibration reset failed\n", stderr)
     exit(1)
 }
 

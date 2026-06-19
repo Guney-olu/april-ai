@@ -91,6 +91,18 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.bordered)
 
+                        Text("Teacher model")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(AppSettings.defaultTeacherModel)
+                                .font(.callout.monospaced())
+                            Text("Used only when Live escalates complex local-control planning, coordinate recovery, or failed tool attempts.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
                         Divider()
 
                         Text("Memory embeddings")

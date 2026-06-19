@@ -258,10 +258,13 @@ struct ScreenFrameGeometry: Equatable {
     let sentImageHeight: Int
     let logicalBounds: CGRect
     let backingScaleFactor: Double
+    let capturedAt: Date
 
     var toolMetadata: [String: Any] {
         [
             "display_id": displayID,
+            "captured_at": ISO8601DateFormatter().string(from: capturedAt),
+            "frame_age_seconds": Date().timeIntervalSince(capturedAt),
             "capture_pixels": [
                 "width": capturePixelWidth,
                 "height": capturePixelHeight
@@ -289,6 +292,7 @@ struct ScreenFrame {
 struct AppSettings: Codable, Equatable {
     static let defaultTextModel = "gemini-3.5-flash"
     static let defaultLiveModel = "gemini-3.1-flash-live-preview"
+    static let defaultTeacherModel = "gemini-3.5-flash"
     static let defaultTTSModel = "gemini-3.1-flash-tts-preview"
     static let defaultTTSVoice = "Aoede"
     static let defaultEmbeddingModel = "gemini-embedding-2"

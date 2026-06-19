@@ -265,11 +265,35 @@ let toolDeclarations: [[String: Any]] = [
         ]
     ],
     [
+        "name": "teacher_plan_control",
+        "description": "Ask the stronger teacher model to plan a complex local-control task.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "task": ["type": "string"],
+                "context": ["type": "string"],
+                "available_tools": ["type": "array", "items": ["type": "string"]],
+                "last_error": ["type": "string"]
+            ],
+            "required": ["task"]
+        ]
+    ],
+    [
         "name": "screen_geometry",
         "description": "Return latest Live screen geometry.",
         "parameters": [
             "type": "object",
             "properties": [:]
+        ]
+    ],
+    [
+        "name": "mouse_calibration",
+        "description": "Inspect, reset, or sample mouse calibration state.",
+        "parameters": [
+            "type": "object",
+            "properties": [
+                "action": ["type": "string"]
+            ]
         ]
     ],
     [

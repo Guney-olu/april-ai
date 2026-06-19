@@ -5,6 +5,8 @@ import Foundation
 @MainActor
 final class ComputerControlService {
     private var latestScreenFrameGeometry: ScreenFrameGeometry?
+    private var calibration = MouseCalibrationState()
+    private let shortcutEngine = ShortcutExecutionEngine()
 
     var isAccessibilityTrusted: Bool {
         AXIsProcessTrusted()
@@ -24,11 +26,47 @@ final class ComputerControlService {
         let mouse = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
         metadata["has_live_frame"] = latestScreenFrameGeometry != nil
         metadata["current_mouse"] = ["x": mouse.x, "y": mouse.y]
+        metadata["active_display_id"] = activeDisplayID(for: mouse)
+        metadata["displays"] = displayMetadata()
+        metadata["mouse_calibration"] = calibration.metadata
         metadata["coordinate_rules"] = [
             "normalized": "x/y must be 0.0...1.0 relative to the main display.",
             "image_pixels": "Use coordinate_space=image_pixels with image_x/image_y from the latest sent Live frame."
         ]
         return ComputerControlResult(ok: true, message: "Screen geometry ready.", metadata: metadata)
+    }
+
+    func mouseCalibration(action: String) -> ComputerControlResult {
+        let normalized = action.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized.isEmpty ? "status" : normalized {
+        case "status":
+            return ComputerControlResult(ok: true, message: "Mouse calibration status.", metadata: calibration.metadata)
+        case "reset":
+            calibration.reset()
+            return ComputerControlResult(ok: true, message: "Mouse calibration reset.", metadata: calibration.metadata)
+        case "sample_center":
+            guard ensureAccessibility() else { return accessibilityFailure() }
+            let geometry = latestScreenFrameGeometry ?? fallbackGeometry()
+            let target = CGPoint(x: geometry.logicalBounds.midX, y: geometry.logicalBounds.midY)
+            let before = currentMouseLocation()
+            moveCursor(to: target, button: .left)
+            Thread.sleep(forTimeInterval: 0.05)
+            let after = currentMouseLocation()
+            let sample = calibration.record(intended: target, actual: after)
+            return ComputerControlResult(
+                ok: true,
+                message: "Mouse center calibration sample recorded.",
+                metadata: geometry.toolMetadata.merging([
+                    "before_mouse": pointMetadata(before),
+                    "target_point": pointMetadata(target),
+                    "actual_mouse": pointMetadata(after),
+                    "sample": sample,
+                    "mouse_calibration": calibration.metadata
+                ]) { _, new in new }
+            )
+        default:
+            return ComputerControlResult(ok: false, message: "Unknown mouse calibration action. Use status, reset, or sample_center.")
+        }
     }
 
     func moveMouse(
@@ -53,9 +91,16 @@ final class ComputerControlService {
         guard resolution.result.ok else {
             return resolution.result
         }
-        let point = resolution.point
-        moveCursor(to: point, button: .left)
-        return ComputerControlResult(ok: true, message: "Mouse moved.", metadata: resolution.metadata)
+        let intendedPoint = resolution.point
+        let targetPoint = correctedPoint(intendedPoint)
+        let before = currentMouseLocation()
+        moveCursor(to: targetPoint, button: .left)
+        Thread.sleep(forTimeInterval: 0.035)
+        let after = currentMouseLocation()
+        let sample = calibration.record(intended: intendedPoint, actual: after)
+        var metadata = resolution.metadata
+        metadata.merge(mouseMoveMetadata(before: before, intended: intendedPoint, target: targetPoint, after: after, sample: sample)) { _, new in new }
+        return ComputerControlResult(ok: true, message: "Mouse moved.", metadata: metadata)
     }
 
     func clickMouse(
@@ -98,7 +143,8 @@ final class ComputerControlService {
             guard resolution.result.ok else {
                 return resolution.result
             }
-            point = resolution.point
+            point = correctedPoint(resolution.point)
+            metadata["intended_point"] = pointMetadata(resolution.point)
             metadata.merge(resolution.metadata) { _, new in new }
         } else {
             point = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
@@ -106,16 +152,27 @@ final class ComputerControlService {
             metadata["resolved_point"] = ["x": point.x, "y": point.y]
         }
 
+        let before = currentMouseLocation()
         if hasRequestedPoint {
             moveCursor(to: point, button: mouseButton)
             Thread.sleep(forTimeInterval: 0.035)
         }
+        let afterMove = currentMouseLocation()
         for _ in 0..<safeCount {
             CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: point, mouseButton: mouseButton)?
                 .post(tap: .cghidEventTap)
             CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: point, mouseButton: mouseButton)?
                 .post(tap: .cghidEventTap)
         }
+        let sample = hasRequestedPoint ? calibration.record(intended: point, actual: afterMove) : [:]
+        metadata.merge([
+            "before_mouse": pointMetadata(before),
+            "target_point": pointMetadata(point),
+            "after_move_mouse": pointMetadata(afterMove),
+            "move_error_distance": distance(point, afterMove),
+            "calibration_sample": sample,
+            "mouse_calibration": calibration.metadata
+        ]) { _, new in new }
         return ComputerControlResult(ok: true, message: "Mouse click executed.", metadata: metadata)
     }
 
@@ -159,8 +216,8 @@ final class ComputerControlService {
             return ComputerControlResult(ok: false, message: "Unsupported key/modifier combination.")
         }
 
-        postShortcut(shortcut)
-        return ComputerControlResult(ok: true, message: "Key pressed.", metadata: ["key": key, "modifiers": shortcut.modifierNames])
+        let execution = shortcutEngine.post(shortcut)
+        return ComputerControlResult(ok: true, message: "Key pressed.", metadata: execution.metadata.merging(["key": key, "modifiers": shortcut.modifierNames]) { _, new in new })
     }
 
     func keyboardShortcut(_ action: String, key: String = "", modifiers: [String] = []) -> ComputerControlResult {
@@ -181,11 +238,16 @@ final class ComputerControlService {
             )
         }
 
-        postShortcut(shortcut)
+        let execution = shortcutEngine.post(shortcut)
         return ComputerControlResult(
             ok: true,
             message: "Shortcut executed.",
-            metadata: ["action": normalized, "key": shortcut.keyName, "key_code": shortcut.keyCode, "modifiers": shortcut.modifierNames]
+            metadata: execution.metadata.merging([
+                "action": normalized,
+                "key": shortcut.keyName,
+                "key_code": shortcut.keyCode,
+                "modifiers": shortcut.modifierNames
+            ]) { _, new in new }
         )
     }
 
@@ -340,7 +402,8 @@ final class ComputerControlService {
             sentImageWidth: Int(bounds.width),
             sentImageHeight: Int(bounds.height),
             logicalBounds: bounds,
-            backingScaleFactor: Double(screen?.backingScaleFactor ?? 1)
+            backingScaleFactor: Double(screen?.backingScaleFactor ?? 1),
+            capturedAt: Date()
         )
     }
 
@@ -376,7 +439,7 @@ final class ComputerControlService {
         let oldItems = pasteboard.pasteboardItems ?? []
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        postShortcut(KeyboardShortcut(keyCode: 9, flags: .maskCommand, modifierNames: ["cmd"]))
+        _ = shortcutEngine.post(KeyboardShortcut(keyName: "v", keyCode: 9, flags: .maskCommand, modifierNames: ["cmd"]))
         try? await Task.sleep(nanoseconds: 250_000_000)
         pasteboard.clearContents()
         pasteboard.writeObjects(oldItems)
@@ -393,31 +456,6 @@ final class ComputerControlService {
         up?.post(tap: .cghidEventTap)
     }
 
-    private func postShortcut(_ shortcut: KeyboardShortcut) {
-        let source = CGEventSource(stateID: .hidSystemState)
-        let modifierCodes = shortcut.modifierNames.compactMap(modifierKeyCode)
-        var activeFlags: CGEventFlags = []
-        for modifier in shortcut.modifierNames {
-            guard let code = modifierKeyCode(modifier), let flag = modifierFlag(modifier) else { continue }
-            activeFlags.insert(flag)
-            let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true)
-            event?.flags = activeFlags
-            event?.post(tap: .cghidEventTap)
-        }
-
-        Thread.sleep(forTimeInterval: modifierCodes.isEmpty ? 0 : 0.035)
-        postKey(shortcut.keyCode, flags: shortcut.flags)
-        Thread.sleep(forTimeInterval: modifierCodes.isEmpty ? 0 : 0.035)
-
-        for modifier in shortcut.modifierNames.reversed() {
-            guard let code = modifierKeyCode(modifier), let flag = modifierFlag(modifier) else { continue }
-            activeFlags.remove(flag)
-            let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
-            event?.flags = activeFlags
-            event?.post(tap: .cghidEventTap)
-        }
-    }
-
     private func shortcut(for action: String) -> KeyboardShortcut? {
         switch action {
         case "copy": return shortcutFromKey("c", modifiers: ["cmd"])
@@ -431,6 +469,7 @@ final class ComputerControlService {
         case "open_location", "address_bar": return shortcutFromKey("l", modifiers: ["cmd"])
         case "new_tab": return shortcutFromKey("t", modifiers: ["cmd"])
         case "close_tab", "close_window": return shortcutFromKey("w", modifiers: ["cmd"])
+        case "window_next", "next_window", "app_window_next": return shortcutFromKey("`", modifiers: ["cmd"])
         case "next_tab": return shortcutFromKey("tab", modifiers: ["control"])
         case "previous_tab": return shortcutFromKey("tab", modifiers: ["control", "shift"])
         case "quit_app": return shortcutFromKey("q", modifiers: ["cmd"])
@@ -561,6 +600,68 @@ final class ComputerControlService {
         return flags
     }
 
+    private func correctedPoint(_ intended: CGPoint) -> CGPoint {
+        CGPoint(x: intended.x + calibration.correctionOffset.x, y: intended.y + calibration.correctionOffset.y)
+    }
+
+    private func currentMouseLocation() -> CGPoint {
+        CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
+    }
+
+    private func mouseMoveMetadata(
+        before: CGPoint,
+        intended: CGPoint,
+        target: CGPoint,
+        after: CGPoint,
+        sample: [String: Any]
+    ) -> [String: Any] {
+        [
+            "before_mouse": pointMetadata(before),
+            "intended_point": pointMetadata(intended),
+            "target_point": pointMetadata(target),
+            "actual_mouse": pointMetadata(after),
+            "move_error_distance": distance(target, after),
+            "calibration_sample": sample,
+            "mouse_calibration": calibration.metadata
+        ]
+    }
+
+    private func pointMetadata(_ point: CGPoint) -> [String: Double] {
+        ["x": point.x, "y": point.y]
+    }
+
+    private func distance(_ a: CGPoint, _ b: CGPoint) -> Double {
+        let dx = a.x - b.x
+        let dy = a.y - b.y
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    private func activeDisplayID(for point: CGPoint) -> UInt32 {
+        for screen in NSScreen.screens {
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
+            if screen.frame.contains(point) {
+                return number.uint32Value
+            }
+        }
+        return CGMainDisplayID()
+    }
+
+    private func displayMetadata() -> [[String: Any]] {
+        NSScreen.screens.compactMap { screen in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+            return [
+                "display_id": number.uint32Value,
+                "frame": [
+                    "x": screen.frame.origin.x,
+                    "y": screen.frame.origin.y,
+                    "width": screen.frame.width,
+                    "height": screen.frame.height
+                ],
+                "backing_scale_factor": screen.backingScaleFactor
+            ] as [String: Any]
+        }
+    }
+
     private func resolveApplication(_ query: String) -> AppResolution {
         if query.contains("."), let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: query) {
             return .found(url)
@@ -655,10 +756,137 @@ private struct KeyboardShortcut {
     let keyCode: CGKeyCode
     let flags: CGEventFlags
     let modifierNames: [String]
+
+    var isGlobalSystemShortcut: Bool {
+        let modifiers = Set(modifierNames)
+        return (keyName == "left" || keyName == "right") && modifiers == ["control"]
+            || keyName == "space" && modifiers == ["cmd"]
+    }
 }
 
 private enum AppResolution {
     case found(URL)
     case ambiguous([URL])
     case notFound
+}
+
+private struct MouseCalibrationState {
+    private(set) var sampleCount = 0
+    private(set) var correctionOffset = CGPoint.zero
+    private(set) var lastSample: [String: Any] = [:]
+
+    var metadata: [String: Any] {
+        [
+            "sample_count": sampleCount,
+            "correction_offset": ["x": correctionOffset.x, "y": correctionOffset.y],
+            "last_sample": lastSample
+        ]
+    }
+
+    mutating func reset() {
+        sampleCount = 0
+        correctionOffset = .zero
+        lastSample = [:]
+    }
+
+    mutating func record(intended: CGPoint, actual: CGPoint) -> [String: Any] {
+        let delta = CGPoint(x: actual.x - intended.x, y: actual.y - intended.y)
+        let errorDistance = sqrt(delta.x * delta.x + delta.y * delta.y)
+        sampleCount += 1
+
+        // Only correct consistent API-level movement drift. Small differences are normal rounding/noise.
+        if errorDistance >= 2 {
+            let nextX = (correctionOffset.x * 0.7) - (delta.x * 0.3)
+            let nextY = (correctionOffset.y * 0.7) - (delta.y * 0.3)
+            correctionOffset = CGPoint(
+                x: max(-80, min(80, nextX)),
+                y: max(-80, min(80, nextY))
+            )
+        }
+
+        lastSample = [
+            "intended": ["x": intended.x, "y": intended.y],
+            "actual": ["x": actual.x, "y": actual.y],
+            "delta": ["x": delta.x, "y": delta.y],
+            "error_distance": errorDistance
+        ]
+        return lastSample
+    }
+}
+
+private struct ShortcutExecutionResult {
+    let metadata: [String: Any]
+}
+
+private final class ShortcutExecutionEngine {
+    func post(_ shortcut: KeyboardShortcut) -> ShortcutExecutionResult {
+        let strategy = shortcut.isGlobalSystemShortcut ? "session_tap_for_global_shortcut" : "hid_tap"
+        let tap: CGEventTapLocation = shortcut.isGlobalSystemShortcut ? .cgSessionEventTap : .cghidEventTap
+        let holdDelay = shortcut.isGlobalSystemShortcut ? 0.09 : 0.035
+        let source = CGEventSource(stateID: .hidSystemState)
+        var activeFlags: CGEventFlags = []
+
+        for modifier in shortcut.modifierNames {
+            guard let code = modifierKeyCode(modifier), let flag = modifierFlag(modifier) else { continue }
+            activeFlags.insert(flag)
+            postKeyEvent(source: source, keyCode: code, keyDown: true, flags: activeFlags, tap: tap)
+        }
+
+        Thread.sleep(forTimeInterval: shortcut.modifierNames.isEmpty ? 0 : holdDelay)
+        postKeyEvent(source: source, keyCode: shortcut.keyCode, keyDown: true, flags: shortcut.flags, tap: tap)
+        Thread.sleep(forTimeInterval: holdDelay)
+        postKeyEvent(source: source, keyCode: shortcut.keyCode, keyDown: false, flags: shortcut.flags, tap: tap)
+        Thread.sleep(forTimeInterval: shortcut.modifierNames.isEmpty ? 0 : holdDelay)
+
+        for modifier in shortcut.modifierNames.reversed() {
+            guard let code = modifierKeyCode(modifier), let flag = modifierFlag(modifier) else { continue }
+            activeFlags.remove(flag)
+            postKeyEvent(source: source, keyCode: code, keyDown: false, flags: activeFlags, tap: tap)
+        }
+
+        var metadata: [String: Any] = [
+            "strategy": strategy,
+            "tap": shortcut.isGlobalSystemShortcut ? "cgSessionEventTap" : "cghidEventTap",
+            "hold_delay_seconds": holdDelay,
+            "key": shortcut.keyName,
+            "key_code": shortcut.keyCode,
+            "modifiers": shortcut.modifierNames
+        ]
+        if shortcut.isGlobalSystemShortcut {
+            metadata["warning"] = "macOS global shortcuts such as Space switching or Spotlight must be enabled in System Settings. Synthetic events can be accepted by April AI but ignored by macOS policy."
+        }
+        return ShortcutExecutionResult(metadata: metadata)
+    }
+
+    private func postKeyEvent(
+        source: CGEventSource?,
+        keyCode: CGKeyCode,
+        keyDown: Bool,
+        flags: CGEventFlags,
+        tap: CGEventTapLocation
+    ) {
+        let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown)
+        event?.flags = flags
+        event?.post(tap: tap)
+    }
+
+    private func modifierKeyCode(_ name: String) -> CGKeyCode? {
+        switch name.lowercased() {
+        case "cmd", "command": return 55
+        case "shift": return 56
+        case "control", "ctrl": return 59
+        case "option", "alt": return 58
+        default: return nil
+        }
+    }
+
+    private func modifierFlag(_ name: String) -> CGEventFlags? {
+        switch name.lowercased() {
+        case "cmd", "command": return .maskCommand
+        case "shift": return .maskShift
+        case "control", "ctrl": return .maskControl
+        case "option", "alt": return .maskAlternate
+        default: return nil
+        }
+    }
 }

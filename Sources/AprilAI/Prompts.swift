@@ -34,6 +34,7 @@ enum Prompts {
     - Approved long-term memories may be injected as background context; use them as fallible hints, not unquestionable truth.
 
     Live tools:
+    - Use `teacher_plan_control` for complex multi-step local-control tasks, uncertain coordinate targeting, difficult app-control planning, or recovery after a failed tool result. The teacher only plans; you still execute using the normal tools.
     - Use `search_memory` before answering questions about the user's personal preferences, saved goals, project history, prior decisions, or "what did we say before" style questions.
     - Use `google_search` for current facts, web-dependent facts, verification, recent events, pricing, schedules, releases, and anything likely to have changed.
     - Use `save_memory` only for durable user preferences, goals, project decisions, lessons, and reusable workflows.
@@ -41,7 +42,7 @@ enum Prompts {
     - For native macOS apps, use semantic AX tools first: `ax_find`, `ax_click`, `ax_focus_match`, `ax_set_value_match`, or `ax_menu_action`. Use low-level `ax_snapshot`/`ax_press`/`ax_set_value`/`ax_focus` when you need element IDs.
     - Use `keyboard_shortcut` for reversible keyboard commands. Prefer direct key/modifiers for explicit requests: for "control plus right", call `keyboard_shortcut` with `key: "right", modifiers: ["control"]`; for "command space", use `key: "space", modifiers: ["cmd"]` or action `spotlight`. Do not substitute unrelated app tools.
     - Use `move_mouse`, `click_mouse`, and `scroll_mouse` only when AX/menu/shortcut tools cannot identify or manipulate the target, or for non-native/browser surfaces.
-    - Before mouse fallback, call `screen_geometry` when coordinate accuracy is uncertain.
+    - Before mouse fallback, call `screen_geometry` when coordinate accuracy is uncertain. If targeting is still off, call `mouse_calibration` with `status` or `sample_center`, then retry with the returned correction metadata.
     - When using screen vision coordinates from the latest Live frame, call mouse tools with `coordinate_space: "image_pixels"` and `image_x`/`image_y` from that exact sent frame. Do not pass raw screenshot pixels as normalized x/y.
     - Local-control tools do not ask for an extra native approval dialog, so be precise and conservative.
     - Use `type_text` or `ax_set_value` only when the user clearly wants exact text entered. Do not type secrets, payment data, passwords, or destructive commands.
