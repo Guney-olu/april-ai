@@ -64,12 +64,15 @@ struct MemoryView: View {
                 )
 
             HStack(spacing: 18) {
-                BrainModelView()
-                    .frame(width: 230, height: 180)
+                BrainModelView(
+                    signals: activeBrainSignals,
+                    totalSessionCount: state.context.memoryClusters.count
+                )
+                    .frame(width: 250, height: 190)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Clean Brain")
+                    Text(state.activeMemorySessionIDs.isEmpty ? "Clean Brain" : "Plugged Brain")
                         .font(.title3.weight(.bold))
                     Text(state.context.memoryClusters.isEmpty
                          ? "No premade sessions. April grows memory only from saved conversations and manual notes."
@@ -77,9 +80,12 @@ struct MemoryView: View {
                         .foregroundStyle(.secondary)
                     Text(state.activeMemorySessionIDs.isEmpty
                          ? "All approved memory is available."
-                         : "\(state.activeMemorySessionIDs.count) session\(state.activeMemorySessionIDs.count == 1 ? "" : "s") plugged into recall.")
+                         : "\(state.activeMemorySessionIDs.count) session\(state.activeMemorySessionIDs.count == 1 ? "" : "s") and \(activeBrainMemoryCount) memor\(activeBrainMemoryCount == 1 ? "y" : "ies") plugged into recall.")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(state.activeMemorySessionIDs.isEmpty ? Color.secondary : Color.green)
+                    Text("Drag the brain to inspect it. Plug sessions below to light neural wires.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -87,6 +93,22 @@ struct MemoryView: View {
             .padding(18)
         }
         .frame(minHeight: 210)
+    }
+
+    private var activeBrainSignals: [MemoryBrainSignal] {
+        state.context.memoryClusters
+            .filter { state.activeMemorySessionIDs.contains($0.session.id) }
+            .map {
+                MemoryBrainSignal(
+                    id: $0.session.id,
+                    title: $0.session.title,
+                    memoryCount: $0.memories.count
+                )
+            }
+    }
+
+    private var activeBrainMemoryCount: Int {
+        activeBrainSignals.reduce(0) { $0 + $1.memoryCount }
     }
 
     private var manualMemory: some View {
@@ -324,11 +346,19 @@ private struct MemoryClusterSection: View {
     @EnvironmentObject private var state: AppState
     let cluster: MemoryCluster
 
+    private var isPlugged: Bool {
+        state.activeMemorySessionIDs.contains(cluster.session.id)
+    }
+
+    private var accent: Color {
+        MemoryBrainPalette.swiftUIColor(for: cluster.session.id)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 Toggle("", isOn: Binding(
-                    get: { state.activeMemorySessionIDs.contains(cluster.session.id) },
+                    get: { isPlugged },
                     set: { _ in state.toggleMemorySession(cluster.session.id) }
                 ))
                 .labelsHidden()
@@ -347,9 +377,9 @@ private struct MemoryClusterSection: View {
 
                 Spacer()
 
-                Text(state.activeMemorySessionIDs.contains(cluster.session.id) ? "Plugged" : "Dormant")
+                Text(isPlugged ? "Plugged" : "Dormant")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(state.activeMemorySessionIDs.contains(cluster.session.id) ? .green : .secondary)
+                    .foregroundStyle(isPlugged ? accent : .secondary)
             }
 
             ForEach(cluster.memories) { memory in
@@ -357,7 +387,12 @@ private struct MemoryClusterSection: View {
             }
         }
         .padding(12)
-        .background(Color.secondary.opacity(0.08))
+        .background(isPlugged ? accent.opacity(0.14) : Color.secondary.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isPlugged ? accent.opacity(0.55) : Color.clear, lineWidth: 1)
+        )
+        .shadow(color: isPlugged ? accent.opacity(0.22) : .clear, radius: 10, x: 0, y: 0)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
