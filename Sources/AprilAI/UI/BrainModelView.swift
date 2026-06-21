@@ -3,34 +3,170 @@ import Foundation
 import SceneKit
 import SwiftUI
 
+struct MemoryBrainSignal: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let memoryCount: Int
+}
+
+enum MemoryBrainPalette {
+    static func swiftUIColor(for id: String) -> Color {
+        Color(nsColor: nsColor(for: id))
+    }
+
+    static func nsColor(for id: String) -> NSColor {
+        let hash = abs(id.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) })
+        let hue = CGFloat(hash % 360) / 360.0
+        return NSColor(calibratedHue: hue, saturation: 0.62, brightness: 1.0, alpha: 1.0)
+    }
+}
+
 struct BrainModelView: NSViewRepresentable {
+    let signals: [MemoryBrainSignal]
+    let totalSessionCount: Int
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> SCNView {
-        let view = SCNView()
-        view.scene = BrainSceneFactory.makeScene()
-        view.backgroundColor = .clear
-        view.allowsCameraControl = false
-        view.autoenablesDefaultLighting = false
-        view.antialiasingMode = .multisampling4X
-        view.isPlaying = true
+        let view = BrainSceneView()
+        view.onInteraction = {
+            context.coordinator.markUserInteraction()
+        }
+        context.coordinator.configure(view: view)
+        context.coordinator.update(signals: signals, totalSessionCount: totalSessionCount)
         return view
     }
 
     func updateNSView(_ view: SCNView, context: Context) {
-        if view.scene == nil {
-            view.scene = BrainSceneFactory.makeScene()
-        }
+        context.coordinator.update(signals: signals, totalSessionCount: totalSessionCount)
         view.isPlaying = true
+    }
+
+    @MainActor
+    final class Coordinator {
+        private weak var view: SCNView?
+        private var components: BrainSceneComponents?
+        private var visibleSignalKey = ""
+        private var lastInteractionDate = Date.distantPast
+        private var interactionGeneration = 0
+
+        func configure(view: SCNView) {
+            let components = BrainSceneFactory.makeScene()
+            self.view = view
+            self.components = components
+
+            view.scene = components.scene
+            view.backgroundColor = .clear
+            view.allowsCameraControl = true
+            view.autoenablesDefaultLighting = false
+            view.antialiasingMode = .multisampling4X
+            view.rendersContinuously = true
+            view.isPlaying = true
+
+            view.defaultCameraController.inertiaEnabled = true
+            view.defaultCameraController.interactionMode = .orbitTurntable
+
+        }
+
+        func markUserInteraction() {
+            lastInteractionDate = Date()
+            interactionGeneration += 1
+            let generation = interactionGeneration
+            refreshIdleSpeed()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_400_000_000)
+                guard let self, self.interactionGeneration == generation else { return }
+                self.refreshIdleSpeed()
+            }
+        }
+
+        func update(signals: [MemoryBrainSignal], totalSessionCount: Int) {
+            guard let components else { return }
+            let visibleSignals = Array(signals.prefix(8))
+            let signalKey = visibleSignals
+                .map { "\($0.id):\($0.memoryCount)" }
+                .joined(separator: "|") + "|total:\(totalSessionCount)"
+
+            guard signalKey != visibleSignalKey else { return }
+            visibleSignalKey = signalKey
+
+            components.wireRoot.childNodes.forEach { $0.removeFromParentNode() }
+            guard !visibleSignals.isEmpty else { return }
+
+            for (index, signal) in visibleSignals.enumerated() {
+                let color = MemoryBrainPalette.nsColor(for: signal.id)
+                let cluster = BrainWireFactory.cluster(
+                    signal: signal,
+                    index: index,
+                    total: visibleSignals.count,
+                    color: color
+                )
+                components.wireRoot.addChildNode(cluster)
+            }
+
+            if signals.count > visibleSignals.count {
+                components.wireRoot.addChildNode(
+                    BrainWireFactory.overflowHalo(hiddenCount: signals.count - visibleSignals.count)
+                )
+            }
+        }
+
+        private func refreshIdleSpeed() {
+            guard let components else { return }
+            let isInteracting = Date().timeIntervalSince(lastInteractionDate) < 2.2
+            components.orbitNode.action(forKey: "idle-orbit")?.speed = isInteracting ? 0.12 : 1.0
+            for node in components.wireRoot.childNodes {
+                node.action(forKey: "wire-orbit")?.speed = isInteracting ? 0.2 : 1.0
+            }
+        }
     }
 }
 
+private final class BrainSceneView: SCNView {
+    var onInteraction: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onInteraction?()
+        super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        onInteraction?()
+        super.mouseDragged(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onInteraction?()
+        super.rightMouseDown(with: event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        onInteraction?()
+        super.scrollWheel(with: event)
+    }
+}
+
+private struct BrainSceneComponents {
+    let scene: SCNScene
+    let orbitNode: SCNNode
+    let wireRoot: SCNNode
+}
+
 private enum BrainSceneFactory {
-    static func makeScene() -> SCNScene {
+    static func makeScene() -> BrainSceneComponents {
         let scene = SCNScene()
         scene.background.contents = NSColor.clear
 
         let orbit = SCNNode()
         let model = modelNode() ?? fallbackNode()
         orbit.addChildNode(model)
+
+        let wireRoot = SCNNode()
+        wireRoot.name = "memory-wire-root"
+        orbit.addChildNode(wireRoot)
+
         scene.rootNode.addChildNode(orbit)
 
         normalize(model)
@@ -47,28 +183,33 @@ private enum BrainSceneFactory {
 
         let key = SCNLight()
         key.type = .omni
-        key.intensity = 950
+        key.intensity = 980
         key.temperature = 6200
         let keyNode = SCNNode()
         keyNode.light = key
         keyNode.position = SCNVector3(1.8, 2.2, 2.4)
+        keyNode.runAction(.repeatForever(.sequence([
+            .moveBy(x: -0.35, y: 0.18, z: 0.15, duration: 3.2),
+            .moveBy(x: 0.35, y: -0.18, z: -0.15, duration: 3.2)
+        ])))
         scene.rootNode.addChildNode(keyNode)
 
         let fill = SCNLight()
         fill.type = .ambient
-        fill.intensity = 320
+        fill.intensity = 340
         fill.color = NSColor(calibratedRed: 0.45, green: 0.65, blue: 1.0, alpha: 1.0)
         let fillNode = SCNNode()
         fillNode.light = fill
         scene.rootNode.addChildNode(fillNode)
 
-        orbit.runAction(.repeatForever(.rotateBy(x: 0, y: CGFloat.pi * 2, z: 0, duration: 22)))
+        orbit.runAction(.repeatForever(.rotateBy(x: 0, y: CGFloat.pi * 2, z: 0, duration: 26)), forKey: "idle-orbit")
         model.runAction(.repeatForever(.sequence([
-            .moveBy(x: 0, y: 0.04, z: 0, duration: 2.6),
-            .moveBy(x: 0, y: -0.04, z: 0, duration: 2.6)
-        ])))
+            .moveBy(x: 0, y: 0.045, z: 0, duration: 2.8),
+            .moveBy(x: 0, y: -0.045, z: 0, duration: 2.8)
+        ])), forKey: "breathing-float")
+        pulseMaterials(in: model)
 
-        return scene
+        return BrainSceneComponents(scene: scene, orbitNode: orbit, wireRoot: wireRoot)
     }
 
     private static func modelNode() -> SCNNode? {
@@ -134,6 +275,134 @@ private enum BrainSceneFactory {
         }
 
         return root
+    }
+
+    private static func pulseMaterials(in node: SCNNode) {
+        node.enumerateChildNodes { child, _ in
+            guard child.geometry != nil else { return }
+            child.runAction(.repeatForever(.sequence([
+                .fadeOpacity(to: 0.84, duration: 1.8),
+                .fadeOpacity(to: 1.0, duration: 1.8)
+            ])), forKey: "emission-pulse")
+        }
+    }
+}
+
+private enum BrainWireFactory {
+    static func cluster(signal: MemoryBrainSignal, index: Int, total: Int, color: NSColor) -> SCNNode {
+        let root = SCNNode()
+        root.name = "wire-\(signal.id)"
+
+        let angle = (Double(index) / Double(max(total, 1))) * Double.pi * 2
+        let y = Double(index % 3 - 1) * 0.34
+        let startRadius = 0.68
+        let endRadius = 1.42
+        let start = SCNVector3(
+            Float(cos(angle) * startRadius),
+            Float(y * 0.38),
+            Float(sin(angle) * startRadius)
+        )
+        let end = SCNVector3(
+            Float(cos(angle + 0.36) * endRadius),
+            Float(y),
+            Float(sin(angle + 0.36) * endRadius)
+        )
+        let mid = SCNVector3(
+            Float(cos(angle + 0.18) * 1.08),
+            Float(y + 0.22 * sin(angle * 1.7)),
+            Float(sin(angle + 0.18) * 1.08)
+        )
+
+        root.addChildNode(cylinder(from: start, to: mid, radius: 0.01, color: color, alpha: 0.72))
+        root.addChildNode(cylinder(from: mid, to: end, radius: 0.01, color: color, alpha: 0.72))
+        root.addChildNode(glowSphere(at: end, radius: 0.045, color: color, alpha: 0.92))
+
+        let memoryNodeCount = min(max(signal.memoryCount, 1), 6)
+        for memoryIndex in 0..<memoryNodeCount {
+            let t = CGFloat(memoryIndex + 1) / CGFloat(memoryNodeCount + 1)
+            let point = bezier(start, mid, end, t)
+            let node = glowSphere(at: point, radius: 0.024, color: color, alpha: 0.84)
+            let phase = Double(memoryIndex) * 0.33
+            node.runAction(.repeatForever(.sequence([
+                .scale(to: 1.32, duration: 0.8 + phase),
+                .scale(to: 0.92, duration: 0.8)
+            ])))
+            root.addChildNode(node)
+        }
+
+        root.runAction(
+            .repeatForever(.rotateBy(x: 0, y: 0.0, z: CGFloat.pi * 2, duration: 18 + Double(index))),
+            forKey: "wire-orbit"
+        )
+        return root
+    }
+
+    static func overflowHalo(hiddenCount: Int) -> SCNNode {
+        let root = SCNNode()
+        root.name = "overflow-halo"
+
+        let torus = SCNTorus(ringRadius: 1.62, pipeRadius: 0.01)
+        torus.ringSegmentCount = 120
+        torus.pipeSegmentCount = 8
+        let material = glowMaterial(color: NSColor.systemPurple, alpha: 0.42)
+        torus.firstMaterial = material
+
+        let halo = SCNNode(geometry: torus)
+        halo.eulerAngles = SCNVector3(Float.pi / 2.8, 0, Float.pi / 6)
+        halo.runAction(.repeatForever(.rotateBy(x: 0, y: CGFloat.pi * 2, z: 0, duration: 16)))
+        root.addChildNode(halo)
+
+        let labelNode = glowSphere(at: SCNVector3(1.62, 0, 0), radius: min(0.09, 0.045 + CGFloat(hiddenCount) * 0.004), color: .systemPurple, alpha: 0.78)
+        root.addChildNode(labelNode)
+        return root
+    }
+
+    private static func bezier(_ a: SCNVector3, _ b: SCNVector3, _ c: SCNVector3, _ t: CGFloat) -> SCNVector3 {
+        let u = 1 - t
+        let ax = u * u * a.x + 2 * u * t * b.x + t * t * c.x
+        let ay = u * u * a.y + 2 * u * t * b.y + t * t * c.y
+        let az = u * u * a.z + 2 * u * t * b.z + t * t * c.z
+        return SCNVector3(
+            ax,
+            ay,
+            az
+        )
+    }
+
+    private static func cylinder(from: SCNVector3, to: SCNVector3, radius: CGFloat, color: NSColor, alpha: CGFloat) -> SCNNode {
+        let vector = to - from
+        let length = CGFloat(vector.length)
+        let geometry = SCNCylinder(radius: radius, height: length)
+        geometry.radialSegmentCount = 10
+        geometry.firstMaterial = glowMaterial(color: color, alpha: alpha)
+
+        let node = SCNNode(geometry: geometry)
+        node.position = (from + to) * 0.5
+        node.orientation = SCNQuaternion.rotation(from: SCNVector3(0, 1, 0), to: vector.normalized)
+        node.runAction(SCNAction.repeatForever(SCNAction.sequence([
+            SCNAction.fadeOpacity(to: 0.55, duration: 1.2),
+            SCNAction.fadeOpacity(to: 1.0, duration: 1.2)
+        ])))
+        return node
+    }
+
+    private static func glowSphere(at point: SCNVector3, radius: CGFloat, color: NSColor, alpha: CGFloat) -> SCNNode {
+        let sphere = SCNSphere(radius: radius)
+        sphere.segmentCount = 24
+        sphere.firstMaterial = glowMaterial(color: color, alpha: alpha)
+        let node = SCNNode(geometry: sphere)
+        node.position = point
+        return node
+    }
+
+    private static func glowMaterial(color: NSColor, alpha: CGFloat) -> SCNMaterial {
+        let material = SCNMaterial()
+        material.lightingModel = .constant
+        material.diffuse.contents = color.withAlphaComponent(alpha)
+        material.emission.contents = color.withAlphaComponent(alpha)
+        material.emission.intensity = 0.95
+        material.isDoubleSided = true
+        return material
     }
 }
 
@@ -401,6 +670,54 @@ private extension BrainSceneFactory {
                 material.roughness.contents = 0.45
             }
         }
+    }
+}
+
+private extension SCNVector3 {
+    static func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
+        SCNVector3(left.x + right.x, left.y + right.y, left.z + right.z)
+    }
+
+    static func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
+        SCNVector3(left.x - right.x, left.y - right.y, left.z - right.z)
+    }
+
+    static func * (vector: SCNVector3, scalar: CGFloat) -> SCNVector3 {
+        SCNVector3(vector.x * scalar, vector.y * scalar, vector.z * scalar)
+    }
+
+    var length: CGFloat {
+        let squared = x * x + y * y + z * z
+        return sqrt(squared)
+    }
+
+    var normalized: SCNVector3 {
+        let length = self.length
+        guard length > 0 else { return SCNVector3(0, 1, 0) }
+        return self * (1 / length)
+    }
+}
+
+private extension SCNQuaternion {
+    static func rotation(from source: SCNVector3, to destination: SCNVector3) -> SCNQuaternion {
+        let from = source.normalized
+        let to = destination.normalized
+        let dot = max(-1, min(1, from.x * to.x + from.y * to.y + from.z * to.z))
+        if dot > 0.9999 {
+            return SCNQuaternion(0, 0, 0, 1)
+        }
+        if dot < -0.9999 {
+            return SCNQuaternion(1, 0, 0, 0)
+        }
+
+        let cross = SCNVector3(
+            from.y * to.z - from.z * to.y,
+            from.z * to.x - from.x * to.z,
+            from.x * to.y - from.y * to.x
+        )
+        let angle = acos(dot)
+        let axis = cross.normalized
+        return SCNQuaternion(axis.x, axis.y, axis.z, angle)
     }
 }
 
