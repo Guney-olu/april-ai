@@ -279,7 +279,19 @@ struct ScreenFrameGeometry: Equatable {
                 "width": logicalBounds.width,
                 "height": logicalBounds.height
             ],
-            "backing_scale_factor": backingScaleFactor
+            "backing_scale_factor": backingScaleFactor,
+            "coordinate_system": [
+                "image_origin": "top_left",
+                "image_units": "sent_image_pixels",
+                "mouse_event_origin": "core_graphics_global_display_points",
+                "mouse_event_units": "logical_points",
+                "y_flip_applied_for_cgevent": false,
+                "swiftui_overlay_note": "SwiftUI/AppKit overlay views may need their own y-axis conversion; CGEvent mouse posting uses the resolved point directly."
+            ],
+            "mapping_scope": [
+                "display_selection": "main_display_only",
+                "multi_monitor_status": "deferred"
+            ]
         ]
     }
 }
@@ -293,6 +305,7 @@ struct AppSettings: Codable, Equatable {
     static let defaultTextModel = "gemini-3.5-flash"
     static let defaultLiveModel = "gemini-3.1-flash-live-preview"
     static let defaultTeacherModel = "gemini-3.5-flash"
+    static let defaultVisionModel = "gemini-3-flash-preview"
     static let defaultTTSModel = "gemini-3.1-flash-tts-preview"
     static let defaultTTSVoice = "Aoede"
     static let defaultEmbeddingModel = "gemini-embedding-2"

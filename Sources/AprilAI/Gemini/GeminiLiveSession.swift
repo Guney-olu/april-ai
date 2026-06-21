@@ -8,6 +8,12 @@ final class GeminiLiveSession: ObservableObject {
     @Published private(set) var lastInputTranscript = ""
     @Published private(set) var lastOutputTranscript = ""
     @Published private(set) var sentAudioChunkCount = 0
+    @Published private(set) var isModelResponding = false
+    @Published private(set) var isToolActive = false
+
+    var isBusyForMemoryContext: Bool {
+        isModelResponding || isToolActive
+    }
 
     var onStatus: ((String) -> Void)?
     var onAudio: ((Data) -> Void)?
@@ -32,8 +38,22 @@ final class GeminiLiveSession: ObservableObject {
     private var sessionResumptionHandle = ""
     private var lastMemoryContext = ""
     private var cancelledToolCallIDs = Set<String>()
+    private var toolCallTasksByID: [String: Task<Void, Never>] = [:]
     private var keepAliveTask: Task<Void, Never>?
     private var lastServerEventAt = Date()
+    private var audioEngineConfigObserver: NSObjectProtocol?
+
+    init() {
+        audioEngineConfigObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: audioEngine,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleAudioEngineConfigurationChange()
+            }
+        }
+    }
 
     func connect(apiKey: String, model: String, voice: String, systemInstruction: String) async throws {
         if isConnected, didSendSetup {
@@ -72,6 +92,8 @@ final class GeminiLiveSession: ObservableObject {
                 self.webSocket = nil
                 self.audioSender.webSocket = nil
                 self.isConnected = false
+                self.isModelResponding = false
+                self.isToolActive = false
                 self.didSendSetup = false
                 self.failPendingSetup(GeminiError.badResponse(message))
                 self.onStatus?(message)
@@ -161,9 +183,13 @@ final class GeminiLiveSession: ObservableObject {
         audioSender.webSocket = nil
         audioSender.reset()
         isConnected = false
+        isModelResponding = false
+        isToolActive = false
         didSendSetup = false
         lastMemoryContext = ""
         cancelledToolCallIDs.removeAll()
+        toolCallTasksByID.values.forEach { $0.cancel() }
+        toolCallTasksByID.removeAll()
         clearSessionResumptionHandle(reason: "manual_disconnect")
         outputSuppressionActive = false
         shouldResumeMicAfterOutput = false
@@ -220,6 +246,30 @@ final class GeminiLiveSession: ObservableObject {
         audioSender.sendAudioStreamEnd()
         onStatus?("Live mic paused. Waiting for Gemini...")
         log("live_mic_stopped")
+    }
+
+    private func handleAudioEngineConfigurationChange() {
+        let wasStreaming = isStreamingMic
+        log("live_audio_engine_configuration_changed", [
+            "was_streaming_mic": wasStreaming,
+            "engine_running": audioEngine.isRunning
+        ])
+
+        guard wasStreaming else { return }
+        forceStopMic()
+        onStatus?("Audio device changed. Restarting live mic...")
+
+        Task { @MainActor in
+            do {
+                try await self.startMic()
+                self.onStatus?("Live mic streaming after audio device change.")
+                self.log("live_mic_restarted_after_audio_device_change")
+            } catch {
+                self.onError?(error.localizedDescription)
+                self.onStatus?("Audio device changed, but mic restart failed.")
+                self.log("live_mic_restart_after_audio_device_change_failed", ["error": error.localizedDescription])
+            }
+        }
     }
 
     func setOutputSuppression(_ active: Bool) {
@@ -396,6 +446,7 @@ final class GeminiLiveSession: ObservableObject {
         if let serverContent = json["serverContent"] as? [String: Any] {
             if let interrupted = serverContent["interrupted"] as? Bool, interrupted {
                 lastOutputTranscript = ""
+                isModelResponding = false
                 onStatus?("Live interrupted.")
                 onInterrupted?()
                 return
@@ -416,6 +467,7 @@ final class GeminiLiveSession: ObservableObject {
                 let transcript = output["text"] as? String,
                 !transcript.isEmpty
             {
+                isModelResponding = true
                 lastOutputTranscript += transcript
                 onTranscript?("Live", transcript)
                 log("live_output_transcript_delta", ["text": transcript])
@@ -425,6 +477,7 @@ final class GeminiLiveSession: ObservableObject {
                 let modelTurn = serverContent["modelTurn"] as? [String: Any],
                 let parts = modelTurn["parts"] as? [[String: Any]]
             {
+                isModelResponding = true
                 for part in parts {
                     let inline = (part["inlineData"] as? [String: Any]) ?? (part["inline_data"] as? [String: Any])
                     if
@@ -438,6 +491,7 @@ final class GeminiLiveSession: ObservableObject {
             }
 
             if let complete = serverContent["turnComplete"] as? Bool, complete {
+                isModelResponding = false
                 if !lastOutputTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     onTranscript?("Assistant", lastOutputTranscript.trimmingCharacters(in: .whitespacesAndNewlines))
                     log("live_assistant_turn_complete", ["text": lastOutputTranscript.trimmingCharacters(in: .whitespacesAndNewlines)])
@@ -465,6 +519,10 @@ final class GeminiLiveSession: ObservableObject {
         } else if let cancellation = json["toolCallCancellation"] as? [String: Any] {
             let ids = cancellation["ids"] as? [String] ?? []
             cancelledToolCallIDs.formUnion(ids)
+            for id in ids {
+                toolCallTasksByID[id]?.cancel()
+                toolCallTasksByID.removeValue(forKey: id)
+            }
             onStatus?("Live cancelled \(ids.count) tool call\(ids.count == 1 ? "" : "s").")
             log("live_tool_cancelled", ["ids": ids])
         }
@@ -489,16 +547,29 @@ final class GeminiLiveSession: ObservableObject {
         }
 
         guard !calls.isEmpty else { return }
+        isToolActive = true
         onStatus?("Live requested \(calls.count) tool call\(calls.count == 1 ? "" : "s").")
         log("live_tool_call", [
             "count": calls.count,
             "calls": calls.map { ["id": $0.id, "name": $0.name, "args": $0.args] }
         ])
 
-        Task { @MainActor in
+        let task = Task { @MainActor in
+            defer {
+                for call in calls {
+                    self.toolCallTasksByID.removeValue(forKey: call.id)
+                }
+            }
+            guard !Task.isCancelled else {
+                self.isToolActive = false
+                return
+            }
             let responses = await onToolCall(calls)
                 .filter { !self.cancelledToolCallIDs.contains($0.id) }
-            guard !responses.isEmpty else { return }
+            guard !responses.isEmpty else {
+                self.isToolActive = false
+                return
+            }
 
             do {
                 try await self.sendToolResponses(responses)
@@ -511,6 +582,10 @@ final class GeminiLiveSession: ObservableObject {
                 self.onError?("Live tool response failed: \(error.localizedDescription)")
                 self.log("live_tool_response_failed", ["error": error.localizedDescription])
             }
+            self.isToolActive = false
+        }
+        for call in calls {
+            toolCallTasksByID[call.id] = task
         }
     }
 

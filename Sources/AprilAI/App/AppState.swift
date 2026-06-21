@@ -41,6 +41,7 @@ final class AppState: ObservableObject {
     private var sessionTurns: [SessionTurn] = []
     private var lastAutoMemoryTurnCount = 0
     private var isAutoSavingMemory = false
+    private var pendingLiveMemoryRefresh = false
 
     init() {
         let loadedSettings = AppSettings.load()
@@ -273,10 +274,38 @@ final class AppState: ObservableObject {
             return
         }
 
+        if liveSession.isBusyForMemoryContext || liveSession.isStreamingMic || speech.isSpeaking {
+            pendingLiveMemoryRefresh = true
+            logInteraction("live_memory_refresh_deferred", [
+                "silent": silent,
+                "is_model_responding": liveSession.isModelResponding,
+                "is_tool_active": liveSession.isToolActive,
+                "is_streaming_mic": liveSession.isStreamingMic,
+                "is_speaking": speech.isSpeaking
+            ])
+            if !silent {
+                status = "Live memory refresh queued until the current turn finishes."
+            }
+            return
+        }
+
         let packet = context.liveMemoryPacket()
         try await liveSession.sendMemoryContext(packet)
+        pendingLiveMemoryRefresh = false
         if !silent {
             status = "Live memory context refreshed."
+        }
+    }
+
+    private func flushPendingLiveMemoryRefreshIfIdle() async {
+        guard pendingLiveMemoryRefresh else { return }
+        guard liveSession.isConnected, !liveSession.isBusyForMemoryContext, !liveSession.isStreamingMic, !speech.isSpeaking else { return }
+        do {
+            try await refreshLiveMemoryContext(silent: true)
+            logInteraction("live_memory_refresh_flushed")
+        } catch {
+            messages.append(ChatMessage(role: .system, content: "Live memory refresh failed: \(error.localizedDescription)"))
+            logInteraction("live_memory_refresh_flush_failed", ["error": error.localizedDescription])
         }
     }
 

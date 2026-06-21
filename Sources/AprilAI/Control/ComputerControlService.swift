@@ -5,7 +5,6 @@ import Foundation
 @MainActor
 final class ComputerControlService {
     private var latestScreenFrameGeometry: ScreenFrameGeometry?
-    private var calibration = MouseCalibrationState()
     private let shortcutEngine = ShortcutExecutionEngine()
 
     var isAccessibilityTrusted: Bool {
@@ -28,45 +27,11 @@ final class ComputerControlService {
         metadata["current_mouse"] = ["x": mouse.x, "y": mouse.y]
         metadata["active_display_id"] = activeDisplayID(for: mouse)
         metadata["displays"] = displayMetadata()
-        metadata["mouse_calibration"] = calibration.metadata
         metadata["coordinate_rules"] = [
             "normalized": "x/y must be 0.0...1.0 relative to the main display.",
-            "image_pixels": "Use coordinate_space=image_pixels with image_x/image_y from the latest sent Live frame."
+            "image_pixels": "Use coordinate_space=image_pixels with image_x/image_y from the latest captured grid image."
         ]
         return ComputerControlResult(ok: true, message: "Screen geometry ready.", metadata: metadata)
-    }
-
-    func mouseCalibration(action: String) -> ComputerControlResult {
-        let normalized = action.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        switch normalized.isEmpty ? "status" : normalized {
-        case "status":
-            return ComputerControlResult(ok: true, message: "Mouse calibration status.", metadata: calibration.metadata)
-        case "reset":
-            calibration.reset()
-            return ComputerControlResult(ok: true, message: "Mouse calibration reset.", metadata: calibration.metadata)
-        case "sample_center":
-            guard ensureAccessibility() else { return accessibilityFailure() }
-            let geometry = latestScreenFrameGeometry ?? fallbackGeometry()
-            let target = CGPoint(x: geometry.logicalBounds.midX, y: geometry.logicalBounds.midY)
-            let before = currentMouseLocation()
-            moveCursor(to: target, button: .left)
-            Thread.sleep(forTimeInterval: 0.05)
-            let after = currentMouseLocation()
-            let sample = calibration.record(intended: target, actual: after)
-            return ComputerControlResult(
-                ok: true,
-                message: "Mouse center calibration sample recorded.",
-                metadata: geometry.toolMetadata.merging([
-                    "before_mouse": pointMetadata(before),
-                    "target_point": pointMetadata(target),
-                    "actual_mouse": pointMetadata(after),
-                    "sample": sample,
-                    "mouse_calibration": calibration.metadata
-                ]) { _, new in new }
-            )
-        default:
-            return ComputerControlResult(ok: false, message: "Unknown mouse calibration action. Use status, reset, or sample_center.")
-        }
     }
 
     func moveMouse(
@@ -92,14 +57,12 @@ final class ComputerControlService {
             return resolution.result
         }
         let intendedPoint = resolution.point
-        let targetPoint = correctedPoint(intendedPoint)
         let before = currentMouseLocation()
-        moveCursor(to: targetPoint, button: .left)
+        moveCursor(to: intendedPoint, button: .left)
         Thread.sleep(forTimeInterval: 0.035)
         let after = currentMouseLocation()
-        let sample = calibration.record(intended: intendedPoint, actual: after)
         var metadata = resolution.metadata
-        metadata.merge(mouseMoveMetadata(before: before, intended: intendedPoint, target: targetPoint, after: after, sample: sample)) { _, new in new }
+        metadata.merge(mouseMoveMetadata(before: before, intended: intendedPoint, after: after)) { _, new in new }
         return ComputerControlResult(ok: true, message: "Mouse moved.", metadata: metadata)
     }
 
@@ -112,7 +75,8 @@ final class ComputerControlService {
         imageWidth: Double?,
         imageHeight: Double?,
         button: String,
-        count: Int
+        count: Int,
+        moveBeforeClick: Bool = true
     ) -> ComputerControlResult {
         guard ensureAccessibility() else { return accessibilityFailure() }
         let safeCount = max(1, min(count, 2))
@@ -126,7 +90,11 @@ final class ComputerControlService {
 
         let point: CGPoint
         let hasRequestedPoint = x != nil || y != nil || !coordinateSpace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || imageX != nil || imageY != nil
-        var metadata: [String: Any] = ["button": normalizedButton.isEmpty ? "left" : normalizedButton, "count": safeCount]
+        var metadata: [String: Any] = [
+            "button": normalizedButton.isEmpty ? "left" : normalizedButton,
+            "count": safeCount,
+            "move_before_click": moveBeforeClick
+        ]
         guard (x == nil && y == nil) || (x != nil && y != nil) else {
             return ComputerControlResult(ok: false, message: "Provide both x and y, or omit both to click the current cursor location.")
         }
@@ -143,7 +111,7 @@ final class ComputerControlService {
             guard resolution.result.ok else {
                 return resolution.result
             }
-            point = correctedPoint(resolution.point)
+            point = resolution.point
             metadata["intended_point"] = pointMetadata(resolution.point)
             metadata.merge(resolution.metadata) { _, new in new }
         } else {
@@ -153,7 +121,7 @@ final class ComputerControlService {
         }
 
         let before = currentMouseLocation()
-        if hasRequestedPoint {
+        if hasRequestedPoint && moveBeforeClick {
             moveCursor(to: point, button: mouseButton)
             Thread.sleep(forTimeInterval: 0.035)
         }
@@ -164,15 +132,16 @@ final class ComputerControlService {
             CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: point, mouseButton: mouseButton)?
                 .post(tap: .cghidEventTap)
         }
-        let sample = hasRequestedPoint ? calibration.record(intended: point, actual: afterMove) : [:]
-        metadata.merge([
+        var clickMetadata: [String: Any] = [
             "before_mouse": pointMetadata(before),
             "target_point": pointMetadata(point),
             "after_move_mouse": pointMetadata(afterMove),
-            "move_error_distance": distance(point, afterMove),
-            "calibration_sample": sample,
-            "mouse_calibration": calibration.metadata
-        ]) { _, new in new }
+            "event_post_strategy": moveBeforeClick ? "move_then_click" : "direct_click_without_pre_move"
+        ]
+        if hasRequestedPoint && moveBeforeClick {
+            clickMetadata["move_error_distance"] = distance(point, afterMove)
+        }
+        metadata.merge(clickMetadata) { _, new in new }
         return ComputerControlResult(ok: true, message: "Mouse click executed.", metadata: metadata)
     }
 
@@ -373,8 +342,8 @@ final class ComputerControlService {
 
         let bounds = geometry.logicalBounds
         let point = CGPoint(
-            x: bounds.minX + imageX * bounds.width / width,
-            y: bounds.minY + imageY * bounds.height / height
+            x: bounds.minX + (imageX * bounds.width / width),
+            y: bounds.minY + (imageY * bounds.height / height)
         )
         var metadata = geometry.toolMetadata
         metadata["coordinate_space"] = "image_pixels"
@@ -383,6 +352,11 @@ final class ComputerControlService {
             "image_y": imageY,
             "image_width": width,
             "image_height": height
+        ]
+        metadata["coordinate_mapper"] = [
+            "mapping_mode": "direct_ratio",
+            "formula": "logical = logical_bounds.origin + image_point * logical_bounds.size / image_size",
+            "resolved_point": ["x": point.x, "y": point.y]
         ]
         metadata["resolved_point"] = ["x": point.x, "y": point.y]
         return (point, metadata, ComputerControlResult(ok: true, message: "Resolved point."))
@@ -600,10 +574,6 @@ final class ComputerControlService {
         return flags
     }
 
-    private func correctedPoint(_ intended: CGPoint) -> CGPoint {
-        CGPoint(x: intended.x + calibration.correctionOffset.x, y: intended.y + calibration.correctionOffset.y)
-    }
-
     private func currentMouseLocation() -> CGPoint {
         CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
     }
@@ -611,18 +581,14 @@ final class ComputerControlService {
     private func mouseMoveMetadata(
         before: CGPoint,
         intended: CGPoint,
-        target: CGPoint,
-        after: CGPoint,
-        sample: [String: Any]
+        after: CGPoint
     ) -> [String: Any] {
         [
             "before_mouse": pointMetadata(before),
             "intended_point": pointMetadata(intended),
-            "target_point": pointMetadata(target),
+            "target_point": pointMetadata(intended),
             "actual_mouse": pointMetadata(after),
-            "move_error_distance": distance(target, after),
-            "calibration_sample": sample,
-            "mouse_calibration": calibration.metadata
+            "move_error_distance": distance(intended, after)
         ]
     }
 
@@ -768,50 +734,6 @@ private enum AppResolution {
     case found(URL)
     case ambiguous([URL])
     case notFound
-}
-
-private struct MouseCalibrationState {
-    private(set) var sampleCount = 0
-    private(set) var correctionOffset = CGPoint.zero
-    private(set) var lastSample: [String: Any] = [:]
-
-    var metadata: [String: Any] {
-        [
-            "sample_count": sampleCount,
-            "correction_offset": ["x": correctionOffset.x, "y": correctionOffset.y],
-            "last_sample": lastSample
-        ]
-    }
-
-    mutating func reset() {
-        sampleCount = 0
-        correctionOffset = .zero
-        lastSample = [:]
-    }
-
-    mutating func record(intended: CGPoint, actual: CGPoint) -> [String: Any] {
-        let delta = CGPoint(x: actual.x - intended.x, y: actual.y - intended.y)
-        let errorDistance = sqrt(delta.x * delta.x + delta.y * delta.y)
-        sampleCount += 1
-
-        // Only correct consistent API-level movement drift. Small differences are normal rounding/noise.
-        if errorDistance >= 2 {
-            let nextX = (correctionOffset.x * 0.7) - (delta.x * 0.3)
-            let nextY = (correctionOffset.y * 0.7) - (delta.y * 0.3)
-            correctionOffset = CGPoint(
-                x: max(-80, min(80, nextX)),
-                y: max(-80, min(80, nextY))
-            )
-        }
-
-        lastSample = [
-            "intended": ["x": intended.x, "y": intended.y],
-            "actual": ["x": actual.x, "y": actual.y],
-            "delta": ["x": delta.x, "y": delta.y],
-            "error_distance": errorDistance
-        ]
-        return lastSample
-    }
 }
 
 private struct ShortcutExecutionResult {

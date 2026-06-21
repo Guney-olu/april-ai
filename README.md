@@ -64,7 +64,7 @@ You can choose another folder from the **Context** or **Settings** screen.
 - SwiftUI macOS app with full window and menu bar surface.
 - Gemini text/image/audio request client.
 - Gemini speech generation using `gemini-3.1-flash-tts-preview` with the `Aoede` voice.
-- Gemini Live WebSocket session using the saved Live model for lower-latency talk, with `gemini-3.5-flash` available as a teacher model for harder control planning.
+- Gemini Live WebSocket session using the saved Live model for lower-latency talk, with `gemini-3.5-flash` available as a teacher model for harder control planning and `gemini-3-flash-preview` used for visual mouse target movement.
 - Fast text model option `gemini-3.1-flash-lite` in Settings.
 - Two-part assistant replies: a short spoken response and a full Markdown answer in chat.
 - Scoped local-control boundary with Accessibility-gated native app, mouse, and keyboard tools.
@@ -73,7 +73,7 @@ You can choose another folder from the **Context** or **Settings** screen.
 - Live mic streaming from the Talk button, with returned audio chunks played as they arrive.
 - Live screen sharing sends low-resolution JPEG frames into the active Gemini Live session.
 - Live sessions enable context-window compression and session resumption hints to reduce abrupt audio-video session termination.
-- Live custom tools for approved memory search, guarded memory saving, custom Google Search grounding, teacher-model control planning, AX-first native app control, app opening/activation/quit, menu actions, mouse fallback, text typing, and allowlisted shortcuts.
+- Live custom tools for approved memory search, guarded memory saving, custom Google Search grounding, teacher-model control planning, AX-first native app control, app opening/activation/quit, menu actions, gridded visual mouse movement, text typing, and allowlisted shortcuts.
 - Local playback of Gemini-generated speech audio for short replies.
 - Local `context/` folder structure:
   - `inbox/`
@@ -86,6 +86,19 @@ You can choose another folder from the **Context** or **Settings** screen.
 - Local JSONL Live-session logs in `context/logs/` for Live status, socket events, tool calls, tool inputs, and tool outputs.
 - Research reports saved to `context/research`.
 
+## Project Layout
+
+The Swift package target is organized by domain under `Sources/AprilAI/`:
+
+- `App/`: app entry point, shared state, and common models.
+- `UI/`: SwiftUI views and text-input helpers.
+- `Gemini/`: Gemini REST client, Live session, prompts, speech, voice recording, screen capture, and Live tool execution.
+- `Context/`: local context folder handling and SQLite indexing.
+- `Memory/`: durable memory storage.
+- `Control/`: Accessibility, keyboard, mouse, app-control, and grid-overlay helpers.
+- `Logging/`: local interaction logging.
+- `Security/`: Keychain API-key storage.
+
 ## Local Control
 
 April AI can request local control through Live function tools. Native app AX control, mouse, and keyboard tools require macOS Accessibility permission, shown in **Settings**. Local-control tools execute without an extra approval dialog once the relevant macOS permission is active.
@@ -94,11 +107,23 @@ Allowed local actions:
 
 - Open, activate, or quit an installed app by exact app name or bundle id.
 - Search native macOS Accessibility trees, press exposed controls, focus elements, set values, and run menu actions without moving the cursor.
-- Move, click, double-click, right-click, and scroll the mouse as a fallback for browser/non-native surfaces.
+- Move the mouse to a described visible target as a fallback for browser/non-native surfaces.
+- Scroll the active UI.
 - Type text into the focused field.
 - Run safe keyboard shortcuts: named actions like copy, Spotlight, new tab, switch Space left/right, plus dynamic key/modifier combos such as Control+Right or Command+Space.
 
-Mouse fallback uses explicit coordinate spaces. Normalized `x/y` must be `0.0...1.0`; screenshot pixel coordinates must use `coordinate_space=image_pixels` with coordinates from the latest Live frame. April AI exposes `screen_geometry` and `mouse_calibration` tools so the model can inspect frame age, display geometry, before/after cursor positions, and correction offsets instead of guessing like a caffeinated spreadsheet.
+Mouse fallback is intentionally simple: Live exposes one high-level mouse movement tool, `move_mouse_to_target`. It captures the main display, overlays a faint grid, asks `gemini-3-flash-preview` for target image coordinates, maps those pixels to macOS logical points with the direct screenshot-size formula, and moves the cursor. It does not click and does not save mouse screenshots.
+
+## Mouse Accuracy
+
+For browser or non-native cursor movement, April AI derives coordinates from the latest screenshot geometry: sent image size to macOS logical display bounds. The mapping is direct ratio math:
+
+```text
+logical_x = logical_bounds.min_x + image_x * logical_bounds.width / image_width
+logical_y = logical_bounds.min_y + image_y * logical_bounds.height / image_height
+```
+
+April AI keeps the current aspect-preserving capture path and does not force fixed Computer Use resolutions. Coordinate metadata records image origin, mouse-event coordinate units, and that the current main-display `CGEvent` path does not apply a Y-flip. Multi-monitor target selection and clicking are intentionally deferred.
 
 For complex app-control tasks, uncertain coordinates, or failed tool attempts, Live can call `teacher_plan_control`. That tool asks `gemini-3.5-flash` for a JSON control plan, but it does not execute actions by itself; the Live model still calls the normal scoped tools.
 

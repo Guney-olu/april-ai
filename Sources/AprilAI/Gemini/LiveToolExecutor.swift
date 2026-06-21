@@ -1,4 +1,31 @@
+import AppKit
+import CoreGraphics
 import Foundation
+
+private struct MouseTargetLocation {
+    let frame: ScreenFrame
+    let griddedPNG: Data
+    let visionRaw: String
+    let parsed: [String: Any]
+    let imageX: Double
+    let imageY: Double
+    let boundingBox: [String: Double]
+    let confidence: Double
+}
+
+private enum MouseTargetLocationError: LocalizedError {
+    case invalidTeacherJSON(String)
+    case missingCoordinates(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidTeacherJSON(let raw):
+            "Vision locator did not return parseable JSON for mouse target location. Raw: \(raw)"
+        case .missingCoordinates(let parsed):
+            "Vision locator JSON was missing numeric image_x/image_y: \(parsed)"
+        }
+    }
+}
 
 @MainActor
 final class LiveToolExecutor {
@@ -8,6 +35,7 @@ final class LiveToolExecutor {
     private let gemini: () -> GeminiClient
     private let settings: () -> AppSettings
     private let onMemoryChanged: () async -> Void
+    private var mouseToolInFlight = false
 
     init(
         context: ContextLibrary,
@@ -128,47 +156,14 @@ final class LiveToolExecutor {
             ]
         ],
         [
-            "name": "mouse_calibration",
-            "description": "Inspect, reset, or sample the mouse calibration state used for coordinate correction. Use status before mouse fallback when targeting looks off.",
+            "name": "move_mouse_to_target",
+            "description": "The only Live mouse movement tool. Captures the screen, overlays a grid, asks gemini-3-flash-preview for the target image coordinates, then moves the cursor there. It does not click and does not save screenshots.",
             "parameters": [
                 "type": "object",
                 "properties": [
-                    "action": ["type": "string", "description": "status, reset, or sample_center."]
-                ]
-            ]
-        ],
-        [
-            "name": "move_mouse",
-            "description": "Move the mouse cursor. Use normalized x/y only for 0.0...1.0, or coordinate_space=image_pixels with image_x/image_y from the latest Live frame. Requires Accessibility permission and executes without a per-action confirmation.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "coordinate_space": ["type": "string", "description": "Use normalized for x/y 0.0...1.0, or image_pixels for image_x/image_y from the latest Live screen frame."],
-                    "x": ["type": "number", "description": "Horizontal normalized coordinate from 0.0 left to 1.0 right. Only use for normalized coordinates."],
-                    "y": ["type": "number", "description": "Vertical normalized coordinate from 0.0 top to 1.0 bottom. Only use for normalized coordinates."],
-                    "image_x": ["type": "number", "description": "Horizontal pixel coordinate in the latest Live screen image."],
-                    "image_y": ["type": "number", "description": "Vertical pixel coordinate in the latest Live screen image."],
-                    "image_width": ["type": "number", "description": "Optional width of the image coordinate space if known."],
-                    "image_height": ["type": "number", "description": "Optional height of the image coordinate space if known."]
-                ]
-            ]
-        ],
-        [
-            "name": "click_mouse",
-            "description": "Click, double-click, or right-click the mouse. Prefer AX tools first. Use normalized x/y only for 0.0...1.0, or coordinate_space=image_pixels with image_x/image_y from the latest Live frame. Requires Accessibility permission and executes without a per-click confirmation.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "coordinate_space": ["type": "string", "description": "Use normalized for x/y 0.0...1.0, image_pixels for image_x/image_y from the latest Live screen frame, or omit coordinates to click current cursor location."],
-                    "x": ["type": "number", "description": "Optional horizontal normalized coordinate from 0.0 to 1.0."],
-                    "y": ["type": "number", "description": "Optional vertical normalized coordinate from 0.0 to 1.0."],
-                    "image_x": ["type": "number", "description": "Optional horizontal pixel coordinate in the latest Live screen image."],
-                    "image_y": ["type": "number", "description": "Optional vertical pixel coordinate in the latest Live screen image."],
-                    "image_width": ["type": "number", "description": "Optional width of the image coordinate space if known."],
-                    "image_height": ["type": "number", "description": "Optional height of the image coordinate space if known."],
-                    "button": ["type": "string", "description": "left or right."],
-                    "count": ["type": "integer", "description": "1 for click, 2 for double-click."]
-                ]
+                    "target_description": ["type": "string", "description": "Visible target to move to, e.g. the Leo AI option, the Brave address bar, the blue Send button."]
+                ],
+                "required": ["target_description"]
             ]
         ],
         [
@@ -376,6 +371,14 @@ final class LiveToolExecutor {
     func execute(_ calls: [LiveToolFunctionCall]) async -> [LiveToolFunctionResponse] {
         var responses: [LiveToolFunctionResponse] = []
         for call in calls {
+            if Task.isCancelled {
+                responses.append(LiveToolFunctionResponse(
+                    id: call.id,
+                    name: call.name,
+                    response: ["ok": false, "cancelled": true, "message": "Tool call cancelled before execution."]
+                ))
+                continue
+            }
             let response: [String: Any]
             do {
                 switch call.name {
@@ -389,30 +392,13 @@ final class LiveToolExecutor {
                     response = try await teacherPlanControl(args: call.args)
                 case "screen_geometry":
                     response = computerControl.screenGeometry().toolResponse
-                case "mouse_calibration":
-                    response = computerControl.mouseCalibration(action: stringArg("action", in: call.args)).toolResponse
-                case "move_mouse":
-                    response = computerControl.moveMouse(
-                        x: doubleArg("x", in: call.args),
-                        y: doubleArg("y", in: call.args),
-                        coordinateSpace: stringArg("coordinate_space", in: call.args),
-                        imageX: doubleArg("image_x", in: call.args),
-                        imageY: doubleArg("image_y", in: call.args),
-                        imageWidth: doubleArg("image_width", in: call.args),
-                        imageHeight: doubleArg("image_height", in: call.args)
-                    ).toolResponse
-                case "click_mouse":
-                    response = computerControl.clickMouse(
-                        x: doubleArg("x", in: call.args),
-                        y: doubleArg("y", in: call.args),
-                        coordinateSpace: stringArg("coordinate_space", in: call.args),
-                        imageX: doubleArg("image_x", in: call.args),
-                        imageY: doubleArg("image_y", in: call.args),
-                        imageWidth: doubleArg("image_width", in: call.args),
-                        imageHeight: doubleArg("image_height", in: call.args),
-                        button: stringArg("button", in: call.args).isEmpty ? "left" : stringArg("button", in: call.args),
-                        count: intArg("count", in: call.args) ?? 1
-                    ).toolResponse
+                case "move_mouse_to_target":
+                    guard beginMouseTool(call.name) else {
+                        response = Self.mouseToolBusyRefusal(call.name)
+                        break
+                    }
+                    defer { endMouseTool() }
+                    response = try await moveMouseToTarget(args: call.args)
                 case "scroll_mouse":
                     response = computerControl.scrollMouse(
                         deltaX: doubleArg("delta_x", in: call.args) ?? 0,
@@ -689,6 +675,148 @@ final class LiveToolExecutor {
         ]
     }
 
+    private func moveMouseToTarget(args: [String: Any]) async throws -> [String: Any] {
+        let target = rawStringArg("target_description", in: args).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else {
+            return ["ok": false, "error": "target_description is required"]
+        }
+
+        let location = try await locateMouseTarget(target)
+        guard !Task.isCancelled else {
+            return Self.cancelledMouseToolResponse("move_mouse_to_target")
+        }
+        let confidence = location.confidence
+        guard confidence >= 0.35 else {
+            return [
+                "ok": false,
+                "error": "Target location confidence too low; not moving cursor.",
+                "vision_model": AppSettings.defaultVisionModel,
+                "target_description": target,
+                "location": location.parsed,
+                "screenshot_geometry": location.frame.geometry.toolMetadata
+            ]
+        }
+
+        let move = computerControl.moveMouse(
+            x: nil,
+            y: nil,
+            coordinateSpace: "image_pixels",
+            imageX: location.imageX,
+            imageY: location.imageY,
+            imageWidth: Double(location.frame.geometry.sentImageWidth),
+            imageHeight: Double(location.frame.geometry.sentImageHeight)
+        )
+
+        return [
+            "ok": move.ok,
+            "message": move.message,
+            "target_description": target,
+            "vision_model": AppSettings.defaultVisionModel,
+            "location": location.parsed,
+            "vision_raw": location.visionRaw,
+            "resolved_image_pixels": [
+                "x": location.imageX,
+                "y": location.imageY,
+                "width": location.frame.geometry.sentImageWidth,
+                "height": location.frame.geometry.sentImageHeight
+            ],
+            "move": move.toolResponse,
+            "screenshot_geometry": location.frame.geometry.toolMetadata
+        ]
+    }
+
+    private func locateMouseTarget(_ target: String) async throws -> MouseTargetLocation {
+        let frame = try await ScreenCaptureService.captureMainDisplayPNGFrame(maxDimension: 1280)
+        computerControl.updateLatestScreenFrameGeometry(frame.geometry)
+        let griddedPNG = try GridOverlayRenderer.renderPNG(basePNG: frame.data)
+
+        var teacher = gemini()
+        teacher.model = AppSettings.defaultVisionModel
+        let prompt = Self.visionLocatorPrompt(
+            target: target,
+            width: frame.geometry.sentImageWidth,
+            height: frame.geometry.sentImageHeight
+        )
+
+        let raw = try await teacher.generateText(
+            system: "You are a precise screen target locator. Return strict JSON only. Do not describe actions and do not click.",
+            prompt: prompt,
+            imagePNG: griddedPNG
+        )
+
+        guard var parsed = Self.parseJSONObject(raw) else {
+            throw MouseTargetLocationError.invalidTeacherJSON(raw)
+        }
+
+        let resolution = try Self.resolveTargetPoint(from: parsed, frame: frame)
+        if let bboxCenter = resolution.centerFromBBox {
+            parsed["computed_center_from_bbox"] = ["x": bboxCenter.x, "y": bboxCenter.y]
+        }
+        parsed["resolved_point_source"] = resolution.source
+
+        return MouseTargetLocation(
+            frame: frame,
+            griddedPNG: griddedPNG,
+            visionRaw: raw,
+            parsed: parsed,
+            imageX: resolution.point.x,
+            imageY: resolution.point.y,
+            boundingBox: resolution.bbox,
+            confidence: Self.doubleValue(parsed["confidence"]) ?? 0
+        )
+    }
+
+    private static func visionLocatorPrompt(
+        target: String,
+        width: Int,
+        height: Int
+    ) -> String {
+        """
+        Locate the requested target in this screenshot. A faint precision grid is overlaid to help you reason, but return exact image pixel coordinates in this exact image.
+
+        Target:
+        \(target)
+
+        Image coordinate system:
+        - Width: \(width) pixels
+        - Height: \(height) pixels
+        - Origin: top-left
+        - x increases right
+        - y increases down
+        - The major grid is 12 columns by 8 rows. Cell A1 is top-left. Cell L8 is bottom-right.
+        - Cell width is approximately \(String(format: "%.2f", Double(width) / 12.0)) pixels.
+        - Cell height is approximately \(String(format: "%.2f", Double(height) / 8.0)) pixels.
+
+        Return strict JSON only:
+        {
+          "image_x": 0,
+          "image_y": 0,
+          "bbox": {"x_min": 0, "y_min": 0, "x_max": 0, "y_max": 0},
+          "grid_cell": "A1",
+          "target_type": "button|icon|tab|menu_item|text_field|card|row|link|checkbox|other",
+          "visible_text": "exact visible label/text used to identify the target, or empty string",
+          "visual_anchor": "what visible object proves this is the requested target",
+          "click_point": "icon_center|label_center|control_center|field_center|safe_interior_point",
+          "local_position": "center of the target within A1",
+          "confidence": 0.0,
+          "reason": "brief visual evidence"
+        }
+
+        Rules:
+        - The grid is only a transparent coordinate aid. Never choose a grid label, ruler label, tick mark, or grid line as the target.
+        - Use the in-cell labels like D2/E3 for rough location, the faint sub-grid for local position, and the cyan edge rulers for pixel scale.
+        - Fill grid_cell with the actual cell containing image_x/image_y. Do not let grid_cell contradict image_x/image_y.
+        - First identify the target using visible_text and visual_anchor. Only then choose coordinates.
+        - Return bbox around the visible clickable UI target, not around unrelated whitespace, neighboring controls, or the text label alone unless the text itself is the clickable target.
+        - Put image_x/image_y on the safest clickable interior point for the target. For icons/cards/buttons, prefer the visual center of the clickable object. For text fields, prefer the center-left interior. For tabs/menu items/rows, prefer the center of the row/control.
+        - If the target is described by a label, use the label to identify the correct object, then click the associated control/card/icon center. Do not click the label's first letter unless that is the only clickable area.
+        - Keep bbox tight but complete enough that image_x/image_y is inside it.
+        - Before returning, verify: image_x/image_y is inside bbox, image_x/image_y is inside grid_cell, and visual_anchor names the same target the user requested.
+        - If multiple targets match, choose the one whose visible text/anchor best matches the request and mention the ambiguity in reason.
+        - If the target is not visible, set confidence below 0.35 and explain why.
+        """
+    }
+
     private func looksSensitive(_ text: String) -> Bool {
         let lower = text.lowercased()
         let blockedTerms = [
@@ -735,6 +863,130 @@ final class LiveToolExecutor {
         return object
     }
 
+    private static func doubleValue(_ value: Any?) -> Double? {
+        if let double = value as? Double { return double }
+        if let int = value as? Int { return Double(int) }
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let string = value as? String { return Double(string.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        return nil
+    }
+
+    private static func resolveTargetPoint(
+        from object: [String: Any],
+        frame: ScreenFrame
+    ) throws -> (
+        point: CGPoint,
+        bbox: [String: Double],
+        centerFromBBox: CGPoint?,
+        source: String
+    ) {
+        guard let rawImageX = doubleValue(object["image_x"]), let rawImageY = doubleValue(object["image_y"]) else {
+            throw MouseTargetLocationError.missingCoordinates(String(describing: object))
+        }
+
+        let width = Double(max(1, frame.geometry.sentImageWidth))
+        let height = Double(max(1, frame.geometry.sentImageHeight))
+        let rawPoint = CGPoint(
+            x: min(max(rawImageX, 0), width - 1),
+            y: min(max(rawImageY, 0), height - 1)
+        )
+        let bbox = boundingBox(from: object)
+        let centerFromBBox = center(from: bbox)
+        let bboxContainsRaw = point(rawPoint, isInside: bbox, tolerance: 2)
+
+        let point: CGPoint
+        let source: String
+        if !bbox.isEmpty, !bboxContainsRaw, let centerFromBBox {
+            point = centerFromBBox
+            source = "bbox_center_because_image_point_was_outside_bbox"
+        } else {
+            point = rawPoint
+            source = rawPoint.x == rawImageX && rawPoint.y == rawImageY ? "vision_image_point" : "clamped_vision_image_point"
+        }
+
+        return (point, bbox, centerFromBBox, source)
+    }
+
+    private static func boundingBox(from object: [String: Any]) -> [String: Double] {
+        guard let raw = object["bbox"] as? [String: Any] else { return [:] }
+        let keys = ["x_min", "y_min", "x_max", "y_max"]
+        var output: [String: Double] = [:]
+        for key in keys {
+            if let value = doubleValue(raw[key]) {
+                output[key] = value
+            }
+        }
+        guard keys.allSatisfy({ output[$0] != nil }) else { return [:] }
+        guard
+            let xMin = output["x_min"],
+            let yMin = output["y_min"],
+            let xMax = output["x_max"],
+            let yMax = output["y_max"],
+            xMax > xMin,
+            yMax > yMin,
+            (xMax - xMin) >= 3,
+            (yMax - yMin) >= 3
+        else {
+            return [:]
+        }
+        return output
+    }
+
+    private static func center(from bbox: [String: Double]) -> CGPoint? {
+        guard
+            let xMin = bbox["x_min"],
+            let yMin = bbox["y_min"],
+            let xMax = bbox["x_max"],
+            let yMax = bbox["y_max"]
+        else {
+            return nil
+        }
+        return CGPoint(x: (xMin + xMax) / 2, y: (yMin + yMax) / 2)
+    }
+
+    private static func point(_ point: CGPoint, isInside bbox: [String: Double], tolerance: Double) -> Bool {
+        guard
+            let xMin = bbox["x_min"],
+            let yMin = bbox["y_min"],
+            let xMax = bbox["x_max"],
+            let yMax = bbox["y_max"]
+        else {
+            return false
+        }
+        return Double(point.x) >= xMin - tolerance
+            && Double(point.x) <= xMax + tolerance
+            && Double(point.y) >= yMin - tolerance
+            && Double(point.y) <= yMax + tolerance
+    }
+
+    private static func mouseToolBusyRefusal(_ tool: String) -> [String: Any] {
+        [
+            "ok": false,
+            "blocked": true,
+            "tool": tool,
+            "message": "A mouse-control tool is already running. Wait for its tool response before starting another mouse action."
+        ]
+    }
+
+    private static func cancelledMouseToolResponse(_ tool: String) -> [String: Any] {
+        [
+            "ok": false,
+            "cancelled": true,
+            "tool": tool,
+            "message": "Mouse tool was cancelled before moving or clicking."
+        ]
+    }
+
+    private func beginMouseTool(_ tool: String) -> Bool {
+        guard !mouseToolInFlight else { return false }
+        mouseToolInFlight = true
+        return true
+    }
+
+    private func endMouseTool() {
+        mouseToolInFlight = false
+    }
+
     private func stringArg(_ key: String, in args: [String: Any]) -> String {
         if let value = args[key] as? String {
             return value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -770,6 +1022,19 @@ final class LiveToolExecutor {
         if let value = args[key] as? Double { return value }
         if let value = args[key] as? NSNumber { return value.doubleValue }
         if let value = args[key] as? String { return Double(value) }
+        return nil
+    }
+
+    private func boolArg(_ key: String, in args: [String: Any]) -> Bool? {
+        if let value = args[key] as? Bool { return value }
+        if let value = args[key] as? NSNumber { return value.boolValue }
+        if let value = args[key] as? String {
+            switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "yes", "1": return true
+            case "false", "no", "0": return false
+            default: return nil
+            }
+        }
         return nil
     }
 

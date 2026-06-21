@@ -12,30 +12,6 @@ struct Geometry {
     let backingScaleFactor: Double
 }
 
-struct Calibration {
-    var sampleCount = 0
-    var correctionX = 0.0
-    var correctionY = 0.0
-
-    mutating func record(intended: CGPoint, actual: CGPoint) -> Double {
-        let dx = actual.x - intended.x
-        let dy = actual.y - intended.y
-        let distance = sqrt(dx * dx + dy * dy)
-        sampleCount += 1
-        if distance >= 2 {
-            correctionX = max(-80, min(80, correctionX * 0.7 - dx * 0.3))
-            correctionY = max(-80, min(80, correctionY * 0.7 - dy * 0.3))
-        }
-        return distance
-    }
-
-    mutating func reset() {
-        sampleCount = 0
-        correctionX = 0
-        correctionY = 0
-    }
-}
-
 func screenGeometryMetadata(_ geometry: Geometry, mouse: CGPoint) -> [String: Any] {
     [
         "display_id": geometry.displayID,
@@ -48,6 +24,18 @@ func screenGeometryMetadata(_ geometry: Geometry, mouse: CGPoint) -> [String: An
             "height": geometry.logicalBounds.height
         ],
         "backing_scale_factor": geometry.backingScaleFactor,
+        "coordinate_system": [
+            "image_origin": "top_left",
+            "image_units": "sent_image_pixels",
+            "mouse_event_origin": "core_graphics_global_display_points",
+            "mouse_event_units": "logical_points",
+            "y_flip_applied_for_cgevent": false,
+            "swiftui_overlay_note": "SwiftUI/AppKit overlay views may need their own y-axis conversion; CGEvent mouse posting uses the resolved point directly."
+        ],
+        "mapping_scope": [
+            "display_selection": "main_display_only",
+            "multi_monitor_status": "deferred"
+        ],
         "current_mouse": ["x": mouse.x, "y": mouse.y]
     ]
 }
@@ -134,22 +122,14 @@ let metadata = screenGeometryMetadata(retinaResized, mouse: CGPoint(x: 10, y: 20
 guard
     let sent = metadata["sent_image_pixels"] as? [String: Double],
     sent["width"] == 1280,
-    metadata["backing_scale_factor"] as? Double == 2
+    metadata["backing_scale_factor"] as? Double == 2,
+    let coordinateSystem = metadata["coordinate_system"] as? [String: Any],
+    coordinateSystem["image_origin"] as? String == "top_left",
+    coordinateSystem["y_flip_applied_for_cgevent"] as? Bool == false,
+    let mappingScope = metadata["mapping_scope"] as? [String: String],
+    mappingScope["display_selection"] == "main_display_only"
 else {
     fputs("FAIL screen geometry metadata missing expected values\n", stderr)
-    exit(1)
-}
-
-var calibration = Calibration()
-let error = calibration.record(intended: CGPoint(x: 100, y: 100), actual: CGPoint(x: 110, y: 94))
-assertClose(error, 11.661903789690601, "calibration error")
-guard calibration.sampleCount == 1, calibration.correctionX < 0, calibration.correctionY > 0 else {
-    fputs("FAIL calibration correction did not move opposite observed drift\n", stderr)
-    exit(1)
-}
-calibration.reset()
-guard calibration.sampleCount == 0, calibration.correctionX == 0, calibration.correctionY == 0 else {
-    fputs("FAIL calibration reset failed\n", stderr)
     exit(1)
 }
 

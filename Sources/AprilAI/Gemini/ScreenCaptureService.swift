@@ -26,7 +26,25 @@ enum ScreenCaptureService {
 
     static func captureMainDisplayPNG() async throws -> Data {
         let cgImage = try await captureMainDisplayCGImage()
-        return try pngData(from: cgImage)
+        let data = try pngData(from: cgImage)
+        try validateEncodedDimensions(data: data, expectedWidth: cgImage.width, expectedHeight: cgImage.height, format: "png")
+        return data
+    }
+
+    static func captureMainDisplayPNGFrame(maxDimension: Int = 1280) async throws -> ScreenFrame {
+        let displayID = CGMainDisplayID()
+        let cgImage = try await captureMainDisplayCGImage(displayID: displayID)
+        let sentImage = resizeIfNeeded(cgImage, maxDimension: maxDimension) ?? cgImage
+        let data = try pngData(from: sentImage)
+        try validateEncodedDimensions(data: data, expectedWidth: sentImage.width, expectedHeight: sentImage.height, format: "png")
+        let geometry = mainDisplayGeometry(
+            displayID: displayID,
+            capturePixelWidth: cgImage.width,
+            capturePixelHeight: cgImage.height,
+            sentImageWidth: sentImage.width,
+            sentImageHeight: sentImage.height
+        )
+        return ScreenFrame(data: data, geometry: geometry)
     }
 
     static func captureMainDisplayJPEG(maxDimension: Int = 1280, compression: Double = 0.72) async throws -> Data {
@@ -38,6 +56,7 @@ enum ScreenCaptureService {
         let cgImage = try await captureMainDisplayCGImage(displayID: displayID)
         let sentImage = resizeIfNeeded(cgImage, maxDimension: maxDimension) ?? cgImage
         let data = try jpegData(from: sentImage, compression: compression)
+        try validateEncodedDimensions(data: data, expectedWidth: sentImage.width, expectedHeight: sentImage.height, format: "jpeg")
         let geometry = mainDisplayGeometry(
             displayID: displayID,
             capturePixelWidth: cgImage.width,
@@ -152,6 +171,38 @@ enum ScreenCaptureService {
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
         return context.makeImage()
     }
+
+    private static func encodedDimensions(from data: Data) -> (width: Int, height: Int)? {
+        guard let bitmap = NSBitmapImageRep(data: data) else { return nil }
+        return (bitmap.pixelsWide, bitmap.pixelsHigh)
+    }
+
+    private static func validateEncodedDimensions(
+        data: Data,
+        expectedWidth: Int,
+        expectedHeight: Int,
+        format: String
+    ) throws {
+        guard let dimensions = encodedDimensions(from: data) else {
+            throw CaptureError.encodedDimensionMismatch(
+                format: format,
+                expectedWidth: expectedWidth,
+                expectedHeight: expectedHeight,
+                actualWidth: -1,
+                actualHeight: -1
+            )
+        }
+
+        guard dimensions.width == expectedWidth, dimensions.height == expectedHeight else {
+            throw CaptureError.encodedDimensionMismatch(
+                format: format,
+                expectedWidth: expectedWidth,
+                expectedHeight: expectedHeight,
+                actualWidth: dimensions.width,
+                actualHeight: dimensions.height
+            )
+        }
+    }
 }
 
 enum CaptureError: LocalizedError {
@@ -160,6 +211,7 @@ enum CaptureError: LocalizedError {
     case noDisplay
     case pngEncodingFailed
     case jpegEncodingFailed
+    case encodedDimensionMismatch(format: String, expectedWidth: Int, expectedHeight: Int, actualWidth: Int, actualHeight: Int)
 
     var errorDescription: String? {
         switch self {
@@ -173,6 +225,8 @@ enum CaptureError: LocalizedError {
             "Screen capture worked, but the app could not encode the screenshot as PNG."
         case .jpegEncodingFailed:
             "Screen capture worked, but the app could not encode the live frame as JPEG."
+        case .encodedDimensionMismatch(let format, let expectedWidth, let expectedHeight, let actualWidth, let actualHeight):
+            "Screen capture encoded \(format) dimensions did not match metadata. Expected \(expectedWidth)x\(expectedHeight), got \(actualWidth)x\(actualHeight)."
         }
     }
 }

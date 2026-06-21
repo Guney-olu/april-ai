@@ -16,12 +16,22 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private var lastLiveAudioAt = Date.distantPast
     private var estimatedLivePlaybackEndAt = Date.distantPast
     private var livePlaybackWatchdog: Task<Void, Never>?
+    private var liveEngineConfigObserver: NSObjectProtocol?
 
     var onOutputActivityChanged: ((Bool) -> Void)?
 
     override init() {
         super.init()
         synthesizer.delegate = self
+        liveEngineConfigObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: liveEngine,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleLiveEngineConfigurationChange()
+            }
+        }
     }
 
     func speak(_ text: String) {
@@ -139,6 +149,20 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         if !liveEngine.isRunning {
             try liveEngine.start()
         }
+    }
+
+    private func handleLiveEngineConfigurationChange() {
+        guard liveEngineConfigured else { return }
+        playbackGeneration += 1
+        pendingLiveBuffers = 0
+        estimatedLivePlaybackEndAt = .distantPast
+        livePlaybackWatchdog?.cancel()
+        livePlaybackWatchdog = nil
+        if livePlayer.engine != nil {
+            livePlayer.stop()
+        }
+        liveEngine.stop()
+        setOutputActive(false)
     }
 
     private func setOutputActive(_ active: Bool) {

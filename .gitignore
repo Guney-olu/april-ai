@@ -9,7 +9,7 @@ DerivedData/
 *.dSYM
 
 # Local runtime data, memory, indexes, and secrets.
-context/
+/context/
 *.sqlite3
 *.sqlite3-*
 *.db
@@ -19,3 +19,6 @@ context/
 *.pem
 *.p12
 *.mobileprovision
+
+# Local manual smoke tests and generated results.
+tests/

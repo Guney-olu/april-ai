@@ -12,6 +12,8 @@ struct SettingsView: View {
 
     private let textModels = [
         "gemini-3.1-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-3.1-pro-preview",
         "gemini-3.5-flash",
         "gemini-3.5-pro",
         "gemini-3.0-flash",
@@ -99,6 +101,18 @@ struct SettingsView: View {
                             Text(AppSettings.defaultTeacherModel)
                                 .font(.callout.monospaced())
                             Text("Used only when Live escalates complex local-control planning, coordinate recovery, or failed tool attempts.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text("Vision locator model")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(AppSettings.defaultVisionModel)
+                                .font(.callout.monospaced())
+                            Text("Used by move_mouse_to_target to read the gridded screenshot and choose where the cursor should move.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

@@ -287,47 +287,14 @@ let toolDeclarations: [[String: Any]] = [
         ]
     ],
     [
-        "name": "mouse_calibration",
-        "description": "Inspect, reset, or sample mouse calibration state.",
+        "name": "move_mouse_to_target",
+        "description": "Capture the screen, overlay a grid, ask the vision model for target coordinates, then move the cursor there.",
         "parameters": [
             "type": "object",
             "properties": [
-                "action": ["type": "string"]
-            ]
-        ]
-    ],
-    [
-        "name": "move_mouse",
-        "description": "Move the mouse using normalized coordinates or latest Live image pixels.",
-        "parameters": [
-            "type": "object",
-            "properties": [
-                "coordinate_space": ["type": "string"],
-                "x": ["type": "number"],
-                "y": ["type": "number"],
-                "image_x": ["type": "number"],
-                "image_y": ["type": "number"],
-                "image_width": ["type": "number"],
-                "image_height": ["type": "number"]
-            ]
-        ]
-    ],
-    [
-        "name": "click_mouse",
-        "description": "Click the mouse after Accessibility permission.",
-        "parameters": [
-            "type": "object",
-            "properties": [
-                "coordinate_space": ["type": "string"],
-                "x": ["type": "number"],
-                "y": ["type": "number"],
-                "image_x": ["type": "number"],
-                "image_y": ["type": "number"],
-                "image_width": ["type": "number"],
-                "image_height": ["type": "number"],
-                "button": ["type": "string"],
-                "count": ["type": "integer"]
-            ]
+                "target_description": ["type": "string"]
+            ],
+            "required": ["target_description"]
         ]
     ],
     [

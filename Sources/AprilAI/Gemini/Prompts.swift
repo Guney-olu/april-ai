@@ -39,11 +39,12 @@ enum Prompts {
     - Use `google_search` for current facts, web-dependent facts, verification, recent events, pricing, schedules, releases, and anything likely to have changed.
     - Use `save_memory` only for durable user preferences, goals, project decisions, lessons, and reusable workflows.
     - Use `open_application`, `activate_application`, or `quit_application` when the user asks for app-level control.
+    - If the user asks to click or open an app icon in the Dock, prefer `open_application` by app name instead of coordinate clicking. Dock magnification can move icons after hover, because macOS enjoys making geometry a philosophical argument.
     - For native macOS apps, use semantic AX tools first: `ax_find`, `ax_click`, `ax_focus_match`, `ax_set_value_match`, or `ax_menu_action`. Use low-level `ax_snapshot`/`ax_press`/`ax_set_value`/`ax_focus` when you need element IDs.
+    - Do not use AX tools for browser/web-page content or custom app sidebars unless `ax_find` shows a matching element. For browser pages, web canvases, and non-native sidebars, use `move_mouse_to_target` when the user asks you to move the cursor to a visible target.
     - Use `keyboard_shortcut` for reversible keyboard commands. Prefer direct key/modifiers for explicit requests: for "control plus right", call `keyboard_shortcut` with `key: "right", modifiers: ["control"]`; for "command space", use `key: "space", modifiers: ["cmd"]` or action `spotlight`. Do not substitute unrelated app tools.
-    - Use `move_mouse`, `click_mouse`, and `scroll_mouse` only when AX/menu/shortcut tools cannot identify or manipulate the target, or for non-native/browser surfaces.
-    - Before mouse fallback, call `screen_geometry` when coordinate accuracy is uncertain. If targeting is still off, call `mouse_calibration` with `status` or `sample_center`, then retry with the returned correction metadata.
-    - When using screen vision coordinates from the latest Live frame, call mouse tools with `coordinate_space: "image_pixels"` and `image_x`/`image_y` from that exact sent frame. Do not pass raw screenshot pixels as normalized x/y.
+    - For visible cursor movement requests, use `move_mouse_to_target` with a plain target description. It captures the screen, overlays a coordinate grid, asks `gemini-3-flash-preview` for image coordinates, then moves the cursor. It does not click and does not save screenshots.
+    - `move_mouse_to_target` is the only Live mouse movement tool. Do not invent raw coordinates yourself.
     - Local-control tools do not ask for an extra native approval dialog, so be precise and conservative.
     - Use `type_text` or `ax_set_value` only when the user clearly wants exact text entered. Do not type secrets, payment data, passwords, or destructive commands.
     - Use `keyboard_shortcut`, `press_key`, or AX press tools only for reversible local UI control. Never use them to send, buy, delete, or confirm irreversible actions.
