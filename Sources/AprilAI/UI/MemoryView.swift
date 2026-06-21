@@ -7,6 +7,7 @@ struct MemoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
+                brainHero
                 liveMemory
                 manualMemory
                 sessionReview
@@ -51,6 +52,41 @@ struct MemoryView: View {
             Text("Session memories are organized like a small external brain. Plug in one or more sessions to control what April AI recalls next.")
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var brainHero: some View {
+        ZStack(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
+            HStack(spacing: 18) {
+                BrainModelView()
+                    .frame(width: 230, height: 180)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Clean Brain")
+                        .font(.title3.weight(.bold))
+                    Text(state.context.memoryClusters.isEmpty
+                         ? "No premade sessions. April grows memory only from saved conversations and manual notes."
+                         : "\(state.context.memoryClusters.count) session brain\(state.context.memoryClusters.count == 1 ? "" : "s") available.")
+                        .foregroundStyle(.secondary)
+                    Text(state.activeMemorySessionIDs.isEmpty
+                         ? "All approved memory is available."
+                         : "\(state.activeMemorySessionIDs.count) session\(state.activeMemorySessionIDs.count == 1 ? "" : "s") plugged into recall.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(state.activeMemorySessionIDs.isEmpty ? Color.secondary : Color.green)
+                }
+
+                Spacer()
+            }
+            .padding(18)
+        }
+        .frame(minHeight: 210)
     }
 
     private var manualMemory: some View {
@@ -212,8 +248,12 @@ struct MemoryView: View {
         GroupBox("Memory Brain") {
             VStack(alignment: .leading, spacing: 12) {
                 if state.context.memoryClusters.isEmpty {
-                    Text("No memory sessions yet.")
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("No memory sessions yet.")
+                            .font(.headline)
+                        Text("Start a chat, let April save useful session memories, or add a manual memory. This list stays empty until something real exists.")
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     ForEach(state.context.memoryClusters) { cluster in
                         MemoryClusterSection(cluster: cluster)

@@ -17,6 +17,7 @@ let package = Package(
                 .linkedFramework("PDFKit"),
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("Security"),
+                .linkedFramework("SceneKit"),
                 .linkedLibrary("sqlite3")
             ]
         )

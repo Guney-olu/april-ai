@@ -63,8 +63,10 @@ final class MemoryStore {
     func clusters() throws -> [MemoryCluster] {
         let sessions = try sessions()
         let memoriesBySession = try memoryItemsBySession()
-        var clusters = sessions.map { session in
-            MemoryCluster(session: session, memories: memoriesBySession[session.id] ?? [])
+        var clusters = sessions.compactMap { session -> MemoryCluster? in
+            let memories = memoriesBySession[session.id] ?? []
+            guard !memories.isEmpty else { return nil }
+            return MemoryCluster(session: session, memories: memories)
         }
 
         let linkedIDs = Set(memoriesBySession.values.flatMap { $0.map(\.id) })
@@ -82,6 +84,18 @@ final class MemoryStore {
             ))
         }
         return clusters
+    }
+
+    func pruneEmptySessions() throws {
+        try bindAndStep(
+            """
+            DELETE FROM memory_sessions
+            WHERE NOT EXISTS (
+              SELECT 1 FROM memory_session_items
+              WHERE memory_session_items.session_id = memory_sessions.session_id
+            );
+            """
+        )
     }
 
     func importLegacyMemories(_ records: [MemoryRecord]) throws {

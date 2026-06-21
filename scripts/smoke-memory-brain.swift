@@ -52,6 +52,7 @@ CREATE TABLE memory_session_items (
 let now = Date().timeIntervalSince1970
 exec("INSERT INTO memory_sessions VALUES('s1','Swift Refactor','Moved files into domain folders',\(now),\(now));")
 exec("INSERT INTO memory_sessions VALUES('s2','Mouse Simplification','Collapsed mouse tools',\(now + 1),\(now + 1));")
+exec("INSERT INTO memory_sessions VALUES('empty','Empty Shell','Should never render as a brain card',\(now + 2),\(now + 2));")
 exec("INSERT INTO memory_items VALUES('m1','procedural','Use domain folders for source organization.','Source layout','Session s1',0.9,0.7,\(now),\(now),'approved');")
 exec("INSERT INTO memory_items VALUES('m2','preference','Prefer one simple mouse movement tool over diagnostic machinery.','Mouse preference','Session s2',0.9,0.8,\(now),\(now),'approved');")
 exec("INSERT INTO memory_session_items VALUES('s1','m1',\(now));")
@@ -75,6 +76,16 @@ guard count("SELECT COUNT(*) FROM memory_session_items WHERE session_id='s1';") 
 }
 guard count("SELECT COUNT(DISTINCT memory_id) FROM memory_session_items WHERE session_id IN ('s1','s2');") == 2 else {
     fputs("FAIL multi-session plugin should dedupe shared memories\n", stderr)
+    exit(1)
+}
+guard count("SELECT COUNT(*) FROM memory_sessions ms WHERE NOT EXISTS (SELECT 1 FROM memory_session_items msi WHERE msi.session_id = ms.session_id);") == 1 else {
+    fputs("FAIL smoke fixture should include one empty session shell\n", stderr)
+    exit(1)
+}
+
+exec("DELETE FROM memory_sessions WHERE NOT EXISTS (SELECT 1 FROM memory_session_items WHERE memory_session_items.session_id = memory_sessions.session_id);")
+guard count("SELECT COUNT(*) FROM memory_sessions WHERE session_id='empty';") == 0 else {
+    fputs("FAIL empty session shell should be pruned\n", stderr)
     exit(1)
 }
 
