@@ -26,6 +26,7 @@ final class ContextLibrary: ObservableObject {
         self.reports = Self.loadJSON([ResearchReport].self, from: resolvedRoot.appending(path: "research/reports.json")) ?? []
         self.documents = try index.documents()
         try migrateLegacyMemoriesIfNeeded()
+        try memoryStore.pruneEmptySessions()
         self.memories = try memoryStore.approvedMemories()
         self.memoryClusters = try memoryStore.clusters()
     }
@@ -204,6 +205,7 @@ final class ContextLibrary: ObservableObject {
         index = try SQLiteIndex(databaseURL: databaseURL)
         memoryStore = try MemoryStore(databaseURL: databaseURL)
         try migrateLegacyMemoriesIfNeeded()
+        try memoryStore.pruneEmptySessions()
         memories = try memoryStore.approvedMemories()
         memoryClusters = try memoryStore.clusters()
         reports = Self.loadJSON([ResearchReport].self, from: reportsURL) ?? []
@@ -211,6 +213,7 @@ final class ContextLibrary: ObservableObject {
     }
 
     private func refreshMemories() throws {
+        try memoryStore.pruneEmptySessions()
         memories = try memoryStore.approvedMemories()
         memoryClusters = try memoryStore.clusters()
         try saveJSON(memories, to: approvedMemoriesURL)

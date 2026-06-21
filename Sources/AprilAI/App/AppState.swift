@@ -4,12 +4,7 @@ import Foundation
 @MainActor
 final class AppState: ObservableObject {
     @Published var selectedTab: WorkspaceTab = .chat
-    @Published var messages: [ChatMessage] = [
-        ChatMessage(
-            role: .system,
-            content: "Online. Add your Gemini API key, drop files into `context/inbox`, index them, then ask something worth oxygen."
-        )
-    ]
+    @Published var messages: [ChatMessage] = []
     @Published var settings = AppSettings()
     @Published var apiKeyInput = ""
     @Published var draft = ""

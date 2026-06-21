@@ -36,6 +36,9 @@ chmod +x "$MACOS_DIR/$APP_NAME"
 if [ -f "$PROJECT_DIR/Assets/AprilAI.icns" ]; then
   cp "$PROJECT_DIR/Assets/AprilAI.icns" "$RESOURCES_DIR/AprilAI.icns"
 fi
+if [ -f "$PROJECT_DIR/Assets/brain human.glb" ]; then
+  cp "$PROJECT_DIR/Assets/brain human.glb" "$RESOURCES_DIR/brain human.glb"
+fi
 
 /usr/bin/plutil -create xml1 "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -insert CFBundleExecutable -string "$APP_NAME" "$CONTENTS_DIR/Info.plist"
