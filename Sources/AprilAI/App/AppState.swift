@@ -20,6 +20,11 @@ final class AppState: ObservableObject {
     @Published var sessionMemorySummary = ""
     @Published var memorySearchQuery = ""
     @Published var memorySearchResults: [MemorySearchResult] = []
+    @Published var activeMemorySessionIDs = Set<String>()
+    @Published var selectedMemoryIDs = Set<String>()
+    @Published var editingMemoryDraft: MemoryEditDraft?
+    @Published var mergeMemoryDraft = ""
+    @Published var mergeMemoryType: MemoryKind = .semantic
     @Published var status = "Ready."
     @Published var isBusy = false
     @Published var isLiveScreenSharing = false
@@ -69,6 +74,9 @@ final class AppState: ObservableObject {
             },
             settings: { [weak self] in
                 self?.settings ?? AppSettings()
+            },
+            activeMemorySessionIDs: { [weak self] in
+                self?.activeMemorySessionIDs ?? []
             },
             onMemoryChanged: { [weak self] in
                 guard let self else { return }
@@ -198,7 +206,12 @@ final class AppState: ObservableObject {
                     embeddingModel: self.settings.embeddingModel,
                     dimensions: self.settings.embeddingDimensions
                 )
-                let memoryResults = self.context.searchMemories(text, embedding: queryEmbedding, limit: 6)
+                let memoryResults = self.context.searchMemories(
+                    text,
+                    embedding: queryEmbedding,
+                    limit: 6,
+                    sessionIDs: self.activeMemorySessionIDs
+                )
                 let prompt = Prompts.chat(userPrompt: text, references: references, memories: memoryResults)
                 let image = includeScreen ? try await ScreenCaptureService.captureMainDisplayPNG() : nil
                 let answer = try await self.gemini().generateText(
@@ -289,7 +302,7 @@ final class AppState: ObservableObject {
             return
         }
 
-        let packet = context.liveMemoryPacket()
+        let packet = context.liveMemoryPacket(sessionIDs: activeMemorySessionIDs)
         try await liveSession.sendMemoryContext(packet)
         pendingLiveMemoryRefresh = false
         if !silent {
@@ -512,10 +525,114 @@ final class AppState: ObservableObject {
         status = "Skipped selected memory candidates."
     }
 
+    func toggleMemorySession(_ sessionID: String) {
+        if activeMemorySessionIDs.contains(sessionID) {
+            activeMemorySessionIDs.remove(sessionID)
+        } else {
+            activeMemorySessionIDs.insert(sessionID)
+        }
+        let activeCount = activeMemorySessionIDs.count
+        status = activeCount == 0
+            ? "Using all approved memories."
+            : "Plugged in \(activeCount) memory session\(activeCount == 1 ? "" : "s")."
+        Task {
+            _ = await refreshLiveMemoryAfterMemoryChange()
+        }
+    }
+
+    func clearActiveMemorySessions() {
+        activeMemorySessionIDs.removeAll()
+        status = "Using all approved memories."
+        Task {
+            _ = await refreshLiveMemoryAfterMemoryChange()
+        }
+    }
+
+    func toggleSelectedMemory(_ memoryID: String) {
+        if selectedMemoryIDs.contains(memoryID) {
+            selectedMemoryIDs.remove(memoryID)
+        } else {
+            selectedMemoryIDs.insert(memoryID)
+        }
+        updateMergeDraftFromSelection()
+    }
+
+    func startEditingMemory(_ memory: MemoryItem) {
+        editingMemoryDraft = MemoryEditDraft(memory: memory)
+    }
+
+    func cancelEditingMemory() {
+        editingMemoryDraft = nil
+    }
+
+    func saveEditingMemory() {
+        guard let draft = editingMemoryDraft else { return }
+        let content = draft.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else {
+            status = "Memory content cannot be empty."
+            return
+        }
+
+        Task {
+            await self.runBusy("Updating memory...") {
+                let embedding = try? await self.embeddingForMemory(
+                    content: content,
+                    title: "\(draft.type.label) memory"
+                )
+                try self.context.updateMemory(
+                    draft,
+                    embedding: embedding,
+                    embeddingModel: self.settings.embeddingModel,
+                    dimensions: self.settings.embeddingDimensions
+                )
+                self.editingMemoryDraft = nil
+                let refreshedLive = await self.refreshLiveMemoryAfterMemoryChange()
+                self.status = refreshedLive ? "Memory updated. Live memory refreshed." : "Memory updated."
+            }
+        }
+    }
+
+    func mergeSelectedMemories() {
+        let selectedIDs = Array(selectedMemoryIDs)
+        guard selectedIDs.count >= 2 else {
+            status = "Select at least two memories to merge."
+            return
+        }
+        let content = mergeMemoryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else {
+            status = "Merged memory content cannot be empty."
+            return
+        }
+
+        Task {
+            await self.runBusy("Merging memories...") {
+                let embedding = try? await self.embeddingForMemory(
+                    content: content,
+                    title: "\(self.mergeMemoryType.label) merged memory"
+                )
+                try self.context.mergeMemories(
+                    ids: selectedIDs,
+                    type: self.mergeMemoryType,
+                    summary: String(content.prefix(120)),
+                    content: content,
+                    embedding: embedding,
+                    embeddingModel: self.settings.embeddingModel,
+                    dimensions: self.settings.embeddingDimensions
+                )
+                self.selectedMemoryIDs.removeAll()
+                self.mergeMemoryDraft = ""
+                let refreshedLive = await self.refreshLiveMemoryAfterMemoryChange()
+                self.status = refreshedLive ? "Merged memories. Live memory refreshed." : "Merged memories."
+            }
+        }
+    }
+
     func deleteMemory(_ memory: MemoryItem) {
         do {
             try context.deleteMemory(memory)
             memorySearchResults.removeAll { $0.item.id == memory.id }
+            selectedMemoryIDs.remove(memory.id)
+            updateMergeDraftFromSelection()
             status = "Deleted memory."
             Task {
                 if await refreshLiveMemoryAfterMemoryChange(), status == "Deleted memory." {
@@ -543,11 +660,26 @@ final class AppState: ObservableObject {
                 embeddingModel: self.settings.embeddingModel,
                 dimensions: self.settings.embeddingDimensions
             )
-            self.memorySearchResults = self.context.searchMemories(query, embedding: embedding, limit: 10)
+            self.memorySearchResults = self.context.searchMemories(
+                query,
+                embedding: embedding,
+                limit: 10,
+                sessionIDs: self.activeMemorySessionIDs
+            )
             self.status = self.memorySearchResults.isEmpty
                 ? "No memory matches."
                 : "Found \(self.memorySearchResults.count) memory match\(self.memorySearchResults.count == 1 ? "" : "es")."
         }
+    }
+
+    private func updateMergeDraftFromSelection() {
+        let selected = context.memories.filter { selectedMemoryIDs.contains($0.id) }
+        guard selected.count >= 2 else {
+            mergeMemoryDraft = ""
+            return
+        }
+        mergeMemoryType = selected.first?.type ?? .semantic
+        mergeMemoryDraft = selected.map { "- \($0.content)" }.joined(separator: "\n")
     }
 
     func runResearch() {

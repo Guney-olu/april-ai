@@ -34,6 +34,7 @@ final class LiveToolExecutor {
     private let accessibilityControl: AccessibilityControlService
     private let gemini: () -> GeminiClient
     private let settings: () -> AppSettings
+    private let activeMemorySessionIDs: () -> Set<String>
     private let onMemoryChanged: () async -> Void
     private var mouseToolInFlight = false
 
@@ -43,6 +44,7 @@ final class LiveToolExecutor {
         accessibilityControl: AccessibilityControlService,
         gemini: @escaping () -> GeminiClient,
         settings: @escaping () -> AppSettings,
+        activeMemorySessionIDs: @escaping () -> Set<String>,
         onMemoryChanged: @escaping () async -> Void
     ) {
         self.context = context
@@ -50,6 +52,7 @@ final class LiveToolExecutor {
         self.accessibilityControl = accessibilityControl
         self.gemini = gemini
         self.settings = settings
+        self.activeMemorySessionIDs = activeMemorySessionIDs
         self.onMemoryChanged = onMemoryChanged
     }
 
@@ -515,7 +518,13 @@ final class LiveToolExecutor {
             dimensions: settings().embeddingDimensions
         )
 
-        var results = context.searchMemories(query, embedding: embedding, limit: limit * 2)
+        let sessionIDs = activeMemorySessionIDs()
+        var results = context.searchMemories(
+            query,
+            embedding: embedding,
+            limit: limit * 2,
+            sessionIDs: sessionIDs
+        )
         if !requestedTypes.isEmpty {
             results = results.filter { requestedTypes.contains($0.item.type) }
         }
@@ -524,6 +533,8 @@ final class LiveToolExecutor {
         return [
             "ok": true,
             "query": query,
+            "active_session_count": sessionIDs.count,
+            "active_session_ids": Array(sessionIDs),
             "matches": results.map { result in
                 [
                     "id": result.item.id,

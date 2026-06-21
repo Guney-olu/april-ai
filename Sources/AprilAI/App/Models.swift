@@ -74,6 +74,47 @@ struct MemoryItem: Identifiable, Codable, Equatable {
     var status: String
 }
 
+struct MemorySession: Identifiable, Codable, Equatable {
+    let id: String
+    var title: String
+    var summary: String
+    var createdAt: Date
+    var approvedAt: Date?
+
+    init(id: String, title: String, summary: String, createdAt: Date, approvedAt: Date?) {
+        self.id = id
+        self.title = title
+        self.summary = summary
+        self.createdAt = createdAt
+        self.approvedAt = approvedAt
+    }
+}
+
+struct MemoryCluster: Identifiable, Codable, Equatable {
+    var session: MemorySession
+    var memories: [MemoryItem]
+
+    var id: String { session.id }
+}
+
+struct MemoryEditDraft: Identifiable, Equatable {
+    var id: String
+    var type: MemoryKind
+    var summary: String
+    var content: String
+    var confidence: Double
+    var importance: Double
+
+    init(memory: MemoryItem) {
+        self.id = memory.id
+        self.type = memory.type
+        self.summary = memory.summary
+        self.content = memory.content
+        self.confidence = memory.confidence
+        self.importance = memory.importance
+    }
+}
+
 struct MemorySearchResult: Identifiable, Codable, Equatable {
     let id: String
     let item: MemoryItem

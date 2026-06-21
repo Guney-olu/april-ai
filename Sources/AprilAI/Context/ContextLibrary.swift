@@ -6,6 +6,7 @@ final class ContextLibrary: ObservableObject {
     @Published private(set) var rootURL: URL
     @Published private(set) var documents: [IndexedDocument] = []
     @Published private(set) var memories: [MemoryItem] = []
+    @Published private(set) var memoryClusters: [MemoryCluster] = []
     @Published private(set) var reports: [ResearchReport] = []
     @Published private(set) var lastIndexSummary = "Not indexed yet."
 
@@ -26,6 +27,7 @@ final class ContextLibrary: ObservableObject {
         self.documents = try index.documents()
         try migrateLegacyMemoriesIfNeeded()
         self.memories = try memoryStore.approvedMemories()
+        self.memoryClusters = try memoryStore.clusters()
     }
 
     var inboxURL: URL { rootURL.appending(path: "inbox") }
@@ -64,12 +66,18 @@ final class ContextLibrary: ObservableObject {
         (try? index.search(query, limit: limit)) ?? []
     }
 
-    func searchMemories(_ query: String, embedding: [Float]?, limit: Int = 6) -> [MemorySearchResult] {
-        (try? memoryStore.search(query: query, queryEmbedding: embedding, limit: limit)) ?? []
+    func searchMemories(_ query: String, embedding: [Float]?, limit: Int = 6, sessionIDs: Set<String> = []) -> [MemorySearchResult] {
+        (try? memoryStore.search(query: query, queryEmbedding: embedding, limit: limit, sessionIDs: sessionIDs)) ?? []
     }
 
-    func liveMemoryPacket(limit: Int = 8) -> String {
-        let selected = memories
+    func liveMemoryPacket(limit: Int = 8, sessionIDs: Set<String> = []) -> String {
+        let source = sessionIDs.isEmpty
+            ? memories
+            : memoryClusters
+                .filter { sessionIDs.contains($0.session.id) }
+                .flatMap(\.memories)
+        let uniqueSelected = Dictionary(grouping: source, by: \.id)
+            .compactMap { $0.value.first }
             .sorted {
                 if $0.importance == $1.importance {
                     return $0.updatedAt > $1.updatedAt
@@ -78,11 +86,11 @@ final class ContextLibrary: ObservableObject {
             }
             .prefix(limit)
 
-        guard !selected.isEmpty else {
+        guard !uniqueSelected.isEmpty else {
             return "No approved memories are available yet."
         }
 
-        return selected.map { memory in
+        return uniqueSelected.map { memory in
             "- \(memory.type.rawValue), confidence \(String(format: "%.2f", memory.confidence)), source \(memory.source): \(memory.content)"
         }.joined(separator: "\n")
     }
@@ -130,9 +138,53 @@ final class ContextLibrary: ObservableObject {
                 embeddingModel: embeddingModel,
                 dimensions: dimensions
             )
+            try memoryStore.linkMemory(item.id, toSession: sessionID)
             try writeMemoryArtifact(item, sessionTitle: sessionTitle, sessionSummary: sessionSummary)
         }
 
+        try refreshMemories()
+    }
+
+    func updateMemory(
+        _ draft: MemoryEditDraft,
+        embedding: [Float]?,
+        embeddingModel: String,
+        dimensions: Int
+    ) throws {
+        let item = try memoryStore.updateMemory(
+            id: draft.id,
+            type: draft.type,
+            summary: draft.summary,
+            content: draft.content,
+            confidence: draft.confidence,
+            importance: draft.importance,
+            embedding: embedding,
+            embeddingModel: embeddingModel,
+            dimensions: dimensions
+        )
+        try writeMemoryArtifact(item)
+        try refreshMemories()
+    }
+
+    func mergeMemories(
+        ids: [String],
+        type: MemoryKind,
+        summary: String,
+        content: String,
+        embedding: [Float]?,
+        embeddingModel: String,
+        dimensions: Int
+    ) throws {
+        let item = try memoryStore.mergeMemories(
+            ids: ids,
+            type: type,
+            summary: summary,
+            content: content,
+            embedding: embedding,
+            embeddingModel: embeddingModel,
+            dimensions: dimensions
+        )
+        try writeMemoryArtifact(item)
         try refreshMemories()
     }
 
@@ -153,12 +205,14 @@ final class ContextLibrary: ObservableObject {
         memoryStore = try MemoryStore(databaseURL: databaseURL)
         try migrateLegacyMemoriesIfNeeded()
         memories = try memoryStore.approvedMemories()
+        memoryClusters = try memoryStore.clusters()
         reports = Self.loadJSON([ResearchReport].self, from: reportsURL) ?? []
         documents = try index.documents()
     }
 
     private func refreshMemories() throws {
         memories = try memoryStore.approvedMemories()
+        memoryClusters = try memoryStore.clusters()
         try saveJSON(memories, to: approvedMemoriesURL)
     }
 
