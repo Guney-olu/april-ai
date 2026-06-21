@@ -8,6 +8,7 @@ final class ContextLibrary: ObservableObject {
     @Published private(set) var memories: [MemoryItem] = []
     @Published private(set) var memoryClusters: [MemoryCluster] = []
     @Published private(set) var reports: [ResearchReport] = []
+    @Published private(set) var agentTasks: [AgentTask] = []
     @Published private(set) var lastIndexSummary = "Not indexed yet."
 
     private var index: SQLiteIndex
@@ -24,6 +25,8 @@ final class ContextLibrary: ObservableObject {
         self.index = try SQLiteIndex(databaseURL: databaseURL)
         self.memoryStore = try MemoryStore(databaseURL: databaseURL)
         self.reports = Self.loadJSON([ResearchReport].self, from: resolvedRoot.appending(path: "research/reports.json")) ?? []
+        self.agentTasks = Self.loadJSON([AgentTask].self, from: resolvedRoot.appending(path: "research/agent_tasks.json"))
+            ?? self.reports.map(\.asAgentTask)
         self.documents = try index.documents()
         try migrateLegacyMemoriesIfNeeded()
         try memoryStore.pruneEmptySessions()
@@ -38,6 +41,7 @@ final class ContextLibrary: ObservableObject {
     private var memoriesURL: URL { memoryURL.appending(path: "memories.json") }
     private var approvedMemoriesURL: URL { memoryURL.appending(path: "approved_memories.json") }
     private var reportsURL: URL { researchURL.appending(path: "reports.json") }
+    private var agentTasksURL: URL { researchURL.appending(path: "agent_tasks.json") }
 
     func reindexInbox() async {
         do {
@@ -195,7 +199,45 @@ final class ContextLibrary: ObservableObject {
         let report = ResearchReport(topic: topic, path: fileURL.path)
         reports.insert(report, at: 0)
         try saveJSON(reports, to: reportsURL)
+
+        let task = AgentTask(
+            id: report.id,
+            topic: topic,
+            prompt: topic,
+            kind: .localResearch,
+            status: .completed,
+            path: fileURL.path,
+            outputText: markdown,
+            createdAt: report.createdAt,
+            updatedAt: report.createdAt
+        )
+        try upsertAgentTask(task)
         return report
+    }
+
+    func saveAgentTask(_ task: AgentTask) throws {
+        try upsertAgentTask(task)
+    }
+
+    func saveAgentTaskOutput(_ task: AgentTask, markdown: String) throws -> AgentTask {
+        let fileURL = researchURL.appending(path: "\(Self.timestampSlug())-agent-task.md")
+        try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+        var updated = task
+        updated.path = fileURL.path
+        updated.outputText = markdown
+        updated.updatedAt = Date()
+        try upsertAgentTask(updated)
+        return updated
+    }
+
+    func saveAgentEnvironmentSnapshot(task: AgentTask, tarData: Data) throws -> AgentTask {
+        let fileURL = researchURL.appending(path: "\(Self.timestampSlug())-\(task.id.uuidString.prefix(8))-sandbox.tar")
+        try tarData.write(to: fileURL, options: .atomic)
+        var updated = task
+        updated.artifactPath = fileURL.path
+        updated.updatedAt = Date()
+        try upsertAgentTask(updated)
+        return updated
     }
 
     func updateRootURL(_ newRoot: URL) throws {
@@ -209,6 +251,7 @@ final class ContextLibrary: ObservableObject {
         memories = try memoryStore.approvedMemories()
         memoryClusters = try memoryStore.clusters()
         reports = Self.loadJSON([ResearchReport].self, from: reportsURL) ?? []
+        agentTasks = Self.loadJSON([AgentTask].self, from: agentTasksURL) ?? reports.map(\.asAgentTask)
         documents = try index.documents()
     }
 
@@ -217,6 +260,16 @@ final class ContextLibrary: ObservableObject {
         memories = try memoryStore.approvedMemories()
         memoryClusters = try memoryStore.clusters()
         try saveJSON(memories, to: approvedMemoriesURL)
+    }
+
+    private func upsertAgentTask(_ task: AgentTask) throws {
+        if let index = agentTasks.firstIndex(where: { $0.id == task.id }) {
+            agentTasks[index] = task
+        } else {
+            agentTasks.insert(task, at: 0)
+        }
+        agentTasks.sort { $0.updatedAt > $1.updatedAt }
+        try saveJSON(agentTasks, to: agentTasksURL)
     }
 
     private func migrateLegacyMemoriesIfNeeded() throws {

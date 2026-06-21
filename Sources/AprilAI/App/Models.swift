@@ -219,6 +219,88 @@ struct MemoryRecord: Identifiable, Codable, Equatable {
     }
 }
 
+enum AgentTaskKind: String, Codable, CaseIterable, Identifiable {
+    case antigravity
+    case deepResearch
+    case localResearch
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .antigravity: "Sandbox Agent"
+        case .deepResearch: "Deep Research"
+        case .localResearch: "Local Research"
+        }
+    }
+}
+
+enum AgentTaskStatus: String, Codable, CaseIterable, Identifiable {
+    case queued
+    case running
+    case completed
+    case failed
+    case requiresAction
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .queued: "Queued"
+        case .running: "Running"
+        case .completed: "Completed"
+        case .failed: "Failed"
+        case .requiresAction: "Needs Action"
+        }
+    }
+}
+
+struct AgentTask: Identifiable, Codable, Equatable {
+    let id: UUID
+    var topic: String
+    var prompt: String
+    var kind: AgentTaskKind
+    var status: AgentTaskStatus
+    var path: String
+    var artifactPath: String
+    var interactionID: String
+    var environmentID: String
+    var outputText: String
+    var error: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        topic: String,
+        prompt: String,
+        kind: AgentTaskKind,
+        status: AgentTaskStatus,
+        path: String = "",
+        artifactPath: String = "",
+        interactionID: String = "",
+        environmentID: String = "",
+        outputText: String = "",
+        error: String = "",
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.topic = topic
+        self.prompt = prompt
+        self.kind = kind
+        self.status = status
+        self.path = path
+        self.artifactPath = artifactPath
+        self.interactionID = interactionID
+        self.environmentID = environmentID
+        self.outputText = outputText
+        self.error = error
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 struct ResearchReport: Identifiable, Codable, Equatable {
     let id: UUID
     let topic: String
@@ -230,6 +312,19 @@ struct ResearchReport: Identifiable, Codable, Equatable {
         self.topic = topic
         self.path = path
         self.createdAt = Date()
+    }
+
+    var asAgentTask: AgentTask {
+        AgentTask(
+            id: id,
+            topic: topic,
+            prompt: topic,
+            kind: .localResearch,
+            status: .completed,
+            path: path,
+            createdAt: createdAt,
+            updatedAt: createdAt
+        )
     }
 }
 

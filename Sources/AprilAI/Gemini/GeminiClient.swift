@@ -231,6 +231,93 @@ struct GeminiClient {
         )
     }
 
+    func runManagedAgent(
+        prompt: String,
+        agent: String = "antigravity-preview-05-2026",
+        systemInstruction: String = "",
+        previousInteractionID: String = "",
+        environmentID: String = "",
+        tools: [[String: Any]] = [
+            ["type": "code_execution"],
+            ["type": "google_search"],
+            ["type": "url_context"]
+        ]
+    ) async throws -> ManagedAgentInteraction {
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw GeminiError.missingAPIKey
+        }
+
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/interactions")!
+        var payload: [String: Any] = [
+            "agent": agent,
+            "input": [
+                [
+                    "type": "text",
+                    "text": prompt
+                ]
+            ],
+            "environment": environmentID.isEmpty ? ["type": "remote"] : environmentID,
+            "tools": tools
+        ]
+
+        if !systemInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["system_instruction"] = systemInstruction
+        }
+        if !previousInteractionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["previous_interaction_id"] = previousInteractionID
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 300
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw GeminiError.badResponse("Managed agent returned a non-HTTP response.")
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            let message = Self.extractError(from: data) ?? "Managed agent HTTP \(http.statusCode)"
+            throw GeminiError.badResponse(message)
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GeminiError.badResponse("Managed agent returned invalid JSON.")
+        }
+
+        return ManagedAgentInteraction(json: json)
+    }
+
+    func downloadEnvironmentSnapshot(environmentID: String) async throws -> Data {
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw GeminiError.missingAPIKey
+        }
+        guard !environmentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw GeminiError.badResponse("Environment id is required to download sandbox files.")
+        }
+
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/files/environment-\(environmentID):download?alt=media")!
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 300
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw GeminiError.badResponse("Environment download returned a non-HTTP response.")
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            let message = Self.extractError(from: data) ?? "Environment download HTTP \(http.statusCode)"
+            throw GeminiError.badResponse(message)
+        }
+
+        return data
+    }
+
     private static func extractText(from data: Data) -> String? {
         guard
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -349,6 +436,70 @@ struct GeminiClient {
         data.appendLittleEndian(subchunk2Size)
         data.append(pcm)
         return data
+    }
+}
+
+struct ManagedAgentInteraction: Equatable {
+    let id: String
+    let environmentID: String
+    let status: String
+    let outputText: String
+    let stepSummaries: [String]
+    let rawJSON: [String: Any]
+
+    init(json: [String: Any]) {
+        self.rawJSON = json
+        self.id = Self.firstString(json, keys: ["id", "name", "interaction_id"])
+        self.environmentID = Self.firstString(json, keys: ["environment_id", "environmentId"])
+        self.status = Self.firstString(json, keys: ["status", "state"])
+        self.outputText = Self.outputText(from: json)
+        self.stepSummaries = Self.stepSummaries(from: json)
+    }
+
+    static func == (lhs: ManagedAgentInteraction, rhs: ManagedAgentInteraction) -> Bool {
+        lhs.id == rhs.id
+            && lhs.environmentID == rhs.environmentID
+            && lhs.status == rhs.status
+            && lhs.outputText == rhs.outputText
+            && lhs.stepSummaries == rhs.stepSummaries
+    }
+
+    private static func firstString(_ json: [String: Any], keys: [String]) -> String {
+        for key in keys {
+            if let string = json[key] as? String, !string.isEmpty {
+                return string
+            }
+        }
+        return ""
+    }
+
+    private static func outputText(from json: [String: Any]) -> String {
+        if let text = json["output_text"] as? String {
+            return text
+        }
+        if let text = json["outputText"] as? String {
+            return text
+        }
+        if let output = json["output"] as? String {
+            return output
+        }
+        if let output = json["output"] as? [String: Any],
+           let text = output["text"] as? String {
+            return text
+        }
+        return ""
+    }
+
+    private static func stepSummaries(from json: [String: Any]) -> [String] {
+        guard let steps = json["steps"] as? [[String: Any]] else { return [] }
+        return steps.prefix(20).map { step in
+            let type = firstString(step, keys: ["type", "kind"])
+            let name = firstString(step, keys: ["name", "tool", "title"])
+            let text = firstString(step, keys: ["text", "summary", "content"])
+            return [type, name, text]
+                .filter { !$0.isEmpty }
+                .joined(separator: ": ")
+        }
     }
 }
 
