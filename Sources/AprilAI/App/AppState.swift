@@ -9,6 +9,9 @@ final class AppState: ObservableObject {
     @Published var apiKeyInput = ""
     @Published var draft = ""
     @Published var researchTopic = ""
+    @Published var agentTaskPrompt = ""
+    @Published var agentTaskKind: AgentTaskKind = .antigravity
+    @Published var downloadAgentSnapshot = true
     @Published var pendingMemory = ""
     @Published var memoryCandidates: [MemoryCandidate] = []
     @Published var sessionMemoryTitle = ""
@@ -678,6 +681,12 @@ final class AppState: ObservableObject {
     }
 
     func runResearch() {
+        let prompt = agentTaskPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !prompt.isEmpty {
+            runAgentTask()
+            return
+        }
+
         let topic = researchTopic.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !topic.isEmpty else { return }
 
@@ -701,6 +710,130 @@ final class AppState: ObservableObject {
                 self.researchTopic = ""
             }
         }
+    }
+
+    func runAgentTask() {
+        let prompt = agentTaskPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            status = "Agent task prompt is empty."
+            return
+        }
+
+        Task {
+            await self.runBusy("Running sandbox agent...") {
+                var task = AgentTask(
+                    topic: self.agentTaskTitle(from: prompt),
+                    prompt: prompt,
+                    kind: self.agentTaskKind,
+                    status: .running
+                )
+                try self.context.saveAgentTask(task)
+
+                do {
+                    switch self.agentTaskKind {
+                    case .localResearch:
+                        let references = self.context.search(prompt, limit: 8)
+                        let report = try await self.gemini().generateText(
+                            system: Prompts.system,
+                            prompt: Prompts.research(topic: prompt, references: references),
+                            useGoogleSearch: self.settings.useGoogleSearchForResearch
+                        )
+                        task.status = .completed
+                        task.outputText = report
+                        task = try self.context.saveAgentTaskOutput(task, markdown: report)
+                    case .deepResearch, .antigravity:
+                        let interaction = try await self.gemini().runManagedAgent(
+                            prompt: self.agentInstructionPrompt(prompt, kind: self.agentTaskKind),
+                            systemInstruction: self.agentSystemInstruction(kind: self.agentTaskKind)
+                        )
+                        task.status = interaction.status == "requires_action" ? .requiresAction : .completed
+                        task.interactionID = interaction.id
+                        task.environmentID = interaction.environmentID
+                        task.outputText = interaction.outputText
+                        let markdown = self.agentMarkdown(task: task, interaction: interaction)
+                        task = try self.context.saveAgentTaskOutput(task, markdown: markdown)
+
+                        if self.downloadAgentSnapshot, !interaction.environmentID.isEmpty {
+                            let tar = try await self.gemini().downloadEnvironmentSnapshot(environmentID: interaction.environmentID)
+                            task = try self.context.saveAgentEnvironmentSnapshot(task: task, tarData: tar)
+                        }
+                    }
+
+                    task.updatedAt = Date()
+                    try self.context.saveAgentTask(task)
+                    self.agentTaskPrompt = ""
+                    self.selectedTab = .research
+                    self.status = "Agent task completed."
+                    self.appendMessage(ChatMessage(
+                        role: .assistant,
+                        content: "Agent task completed:\n\n\(task.path)\(task.artifactPath.isEmpty ? "" : "\n\nSandbox snapshot:\n\(task.artifactPath)")\n\n\(task.outputText)"
+                    ))
+                } catch {
+                    task.status = .failed
+                    task.error = error.localizedDescription
+                    task.updatedAt = Date()
+                    try? self.context.saveAgentTask(task)
+                    throw error
+                }
+            }
+        }
+    }
+
+    private func agentTaskTitle(from prompt: String) -> String {
+        let firstLine = prompt
+            .split(separator: "\n", maxSplits: 1)
+            .first
+            .map(String.init) ?? prompt
+        let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(trimmed.prefix(90))
+    }
+
+    private func agentSystemInstruction(kind: AgentTaskKind) -> String {
+        switch kind {
+        case .antigravity:
+            return "You are April AI's remote sandbox worker. Use code execution, files, and web access when useful. Produce a concise final answer and save important generated artifacts into the sandbox."
+        case .deepResearch:
+            return "You are April AI's deep research worker. Plan, browse, verify, cite sources, and produce a structured report. Save useful artifacts into the sandbox."
+        case .localResearch:
+            return Prompts.system
+        }
+    }
+
+    private func agentInstructionPrompt(_ prompt: String, kind: AgentTaskKind) -> String {
+        switch kind {
+        case .antigravity:
+            return prompt
+        case .deepResearch:
+            return """
+            Run this as a deep research-style task. Use web search and URL reading where useful, cite important sources, and produce a final Markdown report. If you create files, mention their paths.
+
+            Task:
+            \(prompt)
+            """
+        case .localResearch:
+            return prompt
+        }
+    }
+
+    private func agentMarkdown(task: AgentTask, interaction: ManagedAgentInteraction) -> String {
+        """
+        # \(task.topic)
+
+        - Kind: \(task.kind.label)
+        - Status: \(task.status.label)
+        - Interaction: \(interaction.id.isEmpty ? "unknown" : interaction.id)
+        - Environment: \(interaction.environmentID.isEmpty ? "unknown" : interaction.environmentID)
+        - Created: \(task.createdAt)
+
+        ## Prompt
+        \(task.prompt)
+
+        ## Output
+        \(interaction.outputText.isEmpty ? "_No output text returned._" : interaction.outputText)
+
+        ## Steps
+        \(interaction.stepSummaries.isEmpty ? "_No step summaries returned._" : interaction.stepSummaries.map { "- \($0)" }.joined(separator: "\n"))
+        """
     }
 
     private func gemini() -> GeminiClient {

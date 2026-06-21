@@ -137,6 +137,19 @@ final class LiveToolExecutor {
             ]
         ],
         [
+            "name": "start_agent_task",
+            "description": "Start an explicit heavyweight remote sandbox task using Gemini Managed Agents. Use only when the user specifically asks for sandbox, agent, long research, compute, code/data analysis, or artifact generation.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "task": ["type": "string", "description": "The full task for the remote sandbox agent."],
+                    "kind": ["type": "string", "description": "antigravity or deep_research. Use antigravity for compute/code/files, deep_research for cited research."],
+                    "download_snapshot": ["type": "boolean", "description": "Whether to download the sandbox tar snapshot after completion. Use true only when the user asks for files/artifacts."]
+                ],
+                "required": ["task"]
+            ]
+        ],
+        [
             "name": "teacher_plan_control",
             "description": "Ask the stronger teacher model to plan a complex or failed local-control task. The teacher does not execute actions; it returns a safe tool-use plan.",
             "parameters": [
@@ -391,6 +404,8 @@ final class LiveToolExecutor {
                     response = try await saveMemory(args: call.args)
                 case "google_search":
                     response = try await googleSearch(args: call.args)
+                case "start_agent_task":
+                    response = try await startAgentTask(args: call.args)
                 case "teacher_plan_control":
                     response = try await teacherPlanControl(args: call.args)
                 case "screen_geometry":
@@ -628,6 +643,105 @@ final class LiveToolExecutor {
             "queries": result.queries,
             "sources": result.sources.map { ["title": $0.title, "uri": $0.uri] }
         ]
+    }
+
+    private func startAgentTask(args: [String: Any]) async throws -> [String: Any] {
+        let taskPrompt = rawStringArg("task", in: args).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !taskPrompt.isEmpty else {
+            return ["ok": false, "error": "task is required"]
+        }
+
+        let kindRaw = stringArg("kind", in: args).lowercased()
+        let kind: AgentTaskKind = kindRaw.contains("deep") ? .deepResearch : .antigravity
+        var task = AgentTask(
+            topic: String(taskPrompt.prefix(90)),
+            prompt: taskPrompt,
+            kind: kind,
+            status: .running
+        )
+        try context.saveAgentTask(task)
+
+        do {
+            let interaction = try await gemini().runManagedAgent(
+                prompt: liveAgentPrompt(taskPrompt, kind: kind),
+                systemInstruction: liveAgentSystemInstruction(kind: kind)
+            )
+            task.status = interaction.status == "requires_action" ? .requiresAction : .completed
+            task.interactionID = interaction.id
+            task.environmentID = interaction.environmentID
+            task.outputText = interaction.outputText
+            let markdown = liveAgentMarkdown(task: task, interaction: interaction)
+            task = try context.saveAgentTaskOutput(task, markdown: markdown)
+
+            let shouldDownload = boolArg("download_snapshot", in: args) ?? false
+            if shouldDownload, !interaction.environmentID.isEmpty {
+                let snapshot = try await gemini().downloadEnvironmentSnapshot(environmentID: interaction.environmentID)
+                task = try context.saveAgentEnvironmentSnapshot(task: task, tarData: snapshot)
+            }
+
+            try context.saveAgentTask(task)
+            return [
+                "ok": true,
+                "task_id": task.id.uuidString,
+                "kind": task.kind.rawValue,
+                "status": task.status.rawValue,
+                "interaction_id": task.interactionID,
+                "environment_id": task.environmentID,
+                "report_path": task.path,
+                "artifact_path": task.artifactPath,
+                "output": task.outputText
+            ]
+        } catch {
+            task.status = .failed
+            task.error = error.localizedDescription
+            task.updatedAt = Date()
+            try? context.saveAgentTask(task)
+            throw error
+        }
+    }
+
+    private func liveAgentSystemInstruction(kind: AgentTaskKind) -> String {
+        switch kind {
+        case .deepResearch:
+            return "You are April AI's remote deep research worker. Plan, search, verify, cite sources, and return a clear Markdown report. Save useful artifacts in the sandbox."
+        case .antigravity, .localResearch:
+            return "You are April AI's remote sandbox worker. Use code execution, files, and web access when useful. Return concise results and mention generated file paths."
+        }
+    }
+
+    private func liveAgentPrompt(_ prompt: String, kind: AgentTaskKind) -> String {
+        switch kind {
+        case .deepResearch:
+            return """
+            Run this as a deep research-style task. Use web search and URL reading where useful, cite important sources, and produce a final Markdown report.
+
+            Task:
+            \(prompt)
+            """
+        case .antigravity, .localResearch:
+            return prompt
+        }
+    }
+
+    private func liveAgentMarkdown(task: AgentTask, interaction: ManagedAgentInteraction) -> String {
+        """
+        # \(task.topic)
+
+        - Kind: \(task.kind.label)
+        - Status: \(task.status.label)
+        - Interaction: \(interaction.id.isEmpty ? "unknown" : interaction.id)
+        - Environment: \(interaction.environmentID.isEmpty ? "unknown" : interaction.environmentID)
+        - Created: \(task.createdAt)
+
+        ## Prompt
+        \(task.prompt)
+
+        ## Output
+        \(interaction.outputText.isEmpty ? "_No output text returned._" : interaction.outputText)
+
+        ## Steps
+        \(interaction.stepSummaries.isEmpty ? "_No step summaries returned._" : interaction.stepSummaries.map { "- \($0)" }.joined(separator: "\n"))
+        """
     }
 
     private func teacherPlanControl(args: [String: Any]) async throws -> [String: Any] {

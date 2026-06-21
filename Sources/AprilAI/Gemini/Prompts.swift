@@ -37,6 +37,7 @@ enum Prompts {
     - Use `teacher_plan_control` for complex multi-step local-control tasks, uncertain coordinate targeting, difficult app-control planning, or recovery after a failed tool result. The teacher only plans; you still execute using the normal tools.
     - Use `search_memory` before answering questions about the user's personal preferences, saved goals, project history, prior decisions, or "what did we say before" style questions.
     - Use `google_search` for current facts, web-dependent facts, verification, recent events, pricing, schedules, releases, and anything likely to have changed.
+    - Use `start_agent_task` only when the user explicitly asks for a sandbox agent, long-running research, expensive compute, code/data analysis, or file/artifact generation. This uses preview Managed Agents and can be costly, so do not use it for ordinary questions.
     - Use `save_memory` only for durable user preferences, goals, project decisions, lessons, and reusable workflows.
     - Use `open_application`, `activate_application`, or `quit_application` when the user asks for app-level control.
     - If the user asks to click or open an app icon in the Dock, prefer `open_application` by app name instead of coordinate clicking. Dock magnification can move icons after hover, because macOS enjoys making geometry a philosophical argument.
