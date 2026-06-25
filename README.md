@@ -65,7 +65,7 @@ You can choose another folder from the **Context** or **Settings** screen.
 - **Talk naturally**: use Gemini Live for low-latency voice. April speaks short answers out loud, keeps the real answer in chat, and can keep talking while tools are working.
 - **Share only what matters**: ask April to look at the screen or share frames during a Live session. It is not designed around permanent full-time screen surveillance.
 - **Automatic context**: drop files into `context/inbox`, index once, and April can reference them later from local search.
-- **Memory that grows**: sessions can become durable memories under your local `context/memory` folder. Delete bad memories whenever you want.
+- **Memory that grows**: turn useful sessions into attachable memory so April can remember goals, decisions, preferences, and key facts later. Basically the external brain humans kept asking evolution for, but with fewer headaches.
 - **Deep agents**: send expensive research, code/data analysis, and artifact generation to Gemini Managed Agents in a remote sandbox, then track outputs in Agent Lab.
 - **Grounded web search**: use Gemini Google Search grounding when the question needs current web facts.
 - **Local-control tools**: optional Accessibility tools can open apps, use native UI actions, run safe shortcuts, type, and move the mouse when you explicitly ask.
@@ -90,6 +90,16 @@ flowchart LR
 ```
 
 The important bit: context is managed automatically after you add files and index them. You do not have to paste the same background into every conversation like a medieval scribe with Wi-Fi.
+
+Memory is deliberately simple:
+
+1. Talk through a session.
+2. Let April summarize the important bits.
+3. Save the useful memories.
+4. Plug in one or more memory sessions when you want April reminded of that context.
+5. Delete anything stale or wrong from the Memory tab.
+
+That makes memory portable and user-owned: April recalls the sessions you attach, plus indexed local context, without needing you to re-explain the whole project every time.
 
 ## Deep Agents
 
@@ -130,6 +140,19 @@ The Swift package target is organized by domain under `Sources/AprilAI/`:
 - `Control/`: Accessibility, keyboard, mouse, app-control, and grid-overlay helpers.
 - `Logging/`: local interaction logging.
 - `Security/`: Keychain API-key storage.
+
+## CI Smoke Tests
+
+GitHub Actions runs offline smoke checks on pushes and pull requests to `main`:
+
+- `swift build`
+- `swift scripts/smoke-computer-use.swift`
+- `swift scripts/smoke-shortcuts.swift`
+- `swift scripts/smoke-coordinate-mapping.swift`
+- `swift scripts/smoke-memory-brain.swift`
+- `swiftc -parse scripts/smoke-live.swift`
+
+The Live smoke script is parse-checked in CI instead of opening a real Gemini socket, so public contributors do not need secrets just to verify the project.
 
 ## Roadmap
 

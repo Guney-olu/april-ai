@@ -67,7 +67,7 @@ assertEqual(directionalScrollDelta(axis: "y", direction: "up", magnitude: 500), 
 assertEqual(directionalScrollDelta(axis: "x", direction: "right", magnitude: 300), -300, "computer-use scroll right")
 assertEqual(directionalScrollDelta(axis: "y", direction: "down", magnitude: wheelClickPixels(5)), -400, "computer-use wheel clicks down")
 
-let defaultSteps = 12
+let defaultSteps = 6
 let hardCap = 25
 if !(1...hardCap).contains(defaultSteps) {
     fputs("FAIL default max steps is outside allowed range\n", stderr)
