@@ -45,6 +45,7 @@ final class AppState: ObservableObject {
     private var lastAutoMemoryTurnCount = 0
     private var isAutoSavingMemory = false
     private var pendingLiveMemoryRefresh = false
+    private var isSpeakingComputerUseProgress = false
 
     init() {
         let loadedSettings = AppSettings.load()
@@ -79,6 +80,11 @@ final class AppState: ObservableObject {
             onMemoryChanged: { [weak self] in
                 guard let self else { return }
                 _ = await self.refreshLiveMemoryAfterMemoryChange()
+            },
+            onComputerUseProgress: { [weak self] event in
+                Task { @MainActor in
+                    self?.handleComputerUseProgress(event)
+                }
             }
         )
         refreshPermissionStatus()
@@ -974,6 +980,31 @@ final class AppState: ObservableObject {
         ])
         if message.role == .user || message.role == .assistant {
             recordSessionTurn(role: message.role, content: message.content)
+        }
+    }
+
+    private func handleComputerUseProgress(_ event: ComputerUseProgressEvent) {
+        let line = "Autopilot - \(event.phase.rawValue): \(event.message)"
+        status = event.message
+        appendMessage(ChatMessage(role: .system, content: line))
+        var payload: [String: Any] = [
+            "run_id": event.runID.uuidString,
+            "step": event.step,
+            "phase": event.phase.rawValue,
+            "message": event.message
+        ]
+        if let latency = event.latency {
+            payload["latency"] = latency
+        }
+        logInteraction("computer_use_progress", payload)
+
+        guard settings.speakReplies, liveSession.isConnected, !speech.isSpeaking, !isSpeakingComputerUseProgress else { return }
+        isSpeakingComputerUseProgress = true
+        Task { [weak self] in
+            await self?.speakWithGemini(event.message)
+            await MainActor.run {
+                self?.isSpeakingComputerUseProgress = false
+            }
         }
     }
 

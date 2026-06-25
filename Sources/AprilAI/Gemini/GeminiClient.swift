@@ -318,6 +318,57 @@ struct GeminiClient {
         return data
     }
 
+    @MainActor
+    func runComputerUseInteraction(
+        input: [[String: Any]],
+        mode: ComputerUseMode,
+        previousInteractionID: String = ""
+    ) async throws -> ComputerUseInteraction {
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw GeminiError.missingAPIKey
+        }
+
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/interactions")!
+        var payload: [String: Any] = [
+            "model": AppSettings.defaultComputerUseModel,
+            "input": input,
+            "tools": [
+                [
+                    "type": "computer_use",
+                    "environment": mode.rawValue,
+                    "enable_prompt_injection_detection": true
+                ]
+            ]
+        ]
+
+        if !previousInteractionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["previous_interaction_id"] = previousInteractionID
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw GeminiError.badResponse("Computer Use returned a non-HTTP response.")
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            let message = Self.extractError(from: data) ?? "Computer Use HTTP \(http.statusCode)"
+            throw GeminiError.badResponse(message)
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GeminiError.badResponse("Computer Use returned invalid JSON.")
+        }
+
+        return ComputerUseInteraction(json: json)
+    }
+
     private static func extractText(from data: Data) -> String? {
         guard
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -439,6 +490,74 @@ struct GeminiClient {
     }
 }
 
+extension ComputerUseInteraction {
+    init(json: [String: Any]) {
+        self.rawJSON = json
+        self.id = Self.firstString(json, keys: ["id", "name", "interaction_id"])
+        self.outputText = Self.outputText(from: json)
+        self.functionCalls = Self.functionCalls(from: json)
+    }
+
+    private static func firstString(_ json: [String: Any], keys: [String]) -> String {
+        for key in keys {
+            if let string = json[key] as? String, !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return string
+            }
+        }
+        return ""
+    }
+
+    private static func outputText(from json: [String: Any]) -> String {
+        if let text = json["output_text"] as? String { return text }
+        if let text = json["outputText"] as? String { return text }
+        if let text = json["output"] as? String { return text }
+        if let output = json["output"] as? [String: Any], let text = output["text"] as? String { return text }
+        let texts = steps(from: json).compactMap { step -> String? in
+            if step["type"] as? String == "model_output" {
+                return text(from: step)
+            }
+            return nil
+        }
+        return texts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func functionCalls(from json: [String: Any]) -> [ComputerUseFunctionCall] {
+        steps(from: json).compactMap { step in
+            let type = (step["type"] as? String)?.lowercased() ?? ""
+            let hasCallShape = step["functionCall"] != nil || step["function_call"] != nil
+            guard type == "function_call" || hasCallShape else { return nil }
+
+            let call = (step["functionCall"] as? [String: Any])
+                ?? (step["function_call"] as? [String: Any])
+                ?? step
+            let name = firstString(call, keys: ["name", "function", "tool"])
+            guard !name.isEmpty else { return nil }
+            let arguments = (call["arguments"] as? [String: Any])
+                ?? (call["args"] as? [String: Any])
+                ?? (step["arguments"] as? [String: Any])
+                ?? [:]
+            let id = firstString(call, keys: ["id", "call_id", "callId"])
+                .ifEmpty(UUID().uuidString)
+            return ComputerUseFunctionCall(id: id, name: name, arguments: arguments)
+        }
+    }
+
+    private static func steps(from json: [String: Any]) -> [[String: Any]] {
+        if let steps = json["steps"] as? [[String: Any]] { return steps }
+        if let output = json["output"] as? [String: Any], let steps = output["steps"] as? [[String: Any]] { return steps }
+        return []
+    }
+
+    private static func text(from step: [String: Any]) -> String {
+        if let text = step["text"] as? String { return text }
+        if let text = step["content"] as? String { return text }
+        if let content = step["content"] as? [[String: Any]] {
+            return content.compactMap { $0["text"] as? String }.joined()
+        }
+        return ""
+    }
+}
+
 struct ManagedAgentInteraction: Equatable {
     let id: String
     let environmentID: String
@@ -516,6 +635,12 @@ private extension Data {
     mutating func appendLittleEndian(_ value: UInt32) {
         var little = value.littleEndian
         Swift.withUnsafeBytes(of: &little) { append(contentsOf: $0) }
+    }
+}
+
+private extension String {
+    func ifEmpty(_ fallback: String) -> String {
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : self
     }
 }
 

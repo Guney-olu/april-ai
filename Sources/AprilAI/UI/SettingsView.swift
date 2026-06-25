@@ -117,6 +117,18 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
 
+                        Text("Computer Use autopilot")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(AppSettings.defaultComputerUseModel), policy: Run until risky, max \(AppSettings.defaultComputerUseMaxSteps) steps")
+                                .font(.callout.monospaced())
+                            Text("Used only when Live explicitly starts a visual UI-control or form-filling loop. It pauses before send, buy, delete, submit, secrets, or security changes.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
                         Divider()
 
                         Text("Memory embeddings")

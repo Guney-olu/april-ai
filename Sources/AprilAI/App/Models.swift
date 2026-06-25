@@ -351,6 +351,105 @@ struct GroundedSearchResult: Codable, Equatable {
     let sources: [GroundedSearchSource]
 }
 
+enum ComputerUseMode: String, Codable, CaseIterable, Identifiable {
+    case desktop
+    case browser
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .desktop: "Desktop"
+        case .browser: "Browser"
+        }
+    }
+}
+
+enum ComputerUseRunStatus: String, Codable, Equatable {
+    case running
+    case completed
+    case pausedForSafety
+    case failed
+    case maxStepsReached
+    case cancelled
+}
+
+struct ComputerUseStep: Codable, Equatable {
+    let stepNumber: Int
+    let actionName: String
+    let intent: String
+    let argumentsSummary: String
+    let resultMessage: String
+    let safetyStatus: String
+    let timestamp: Date
+}
+
+enum ComputerUseProgressPhase: String, Codable, Equatable {
+    case looking = "Looking"
+    case clicking = "Clicking"
+    case typing = "Typing"
+    case waiting = "Waiting"
+    case checkingResult = "Checking result"
+    case steering = "Steering"
+    case finished = "Finished"
+}
+
+struct ComputerUseProgressEvent: Identifiable, Codable, Equatable {
+    let id: UUID
+    let runID: UUID
+    let step: Int
+    let phase: ComputerUseProgressPhase
+    let message: String
+    let timestamp: Date
+    let latency: Double?
+
+    init(
+        id: UUID = UUID(),
+        runID: UUID,
+        step: Int,
+        phase: ComputerUseProgressPhase,
+        message: String,
+        timestamp: Date = Date(),
+        latency: Double? = nil
+    ) {
+        self.id = id
+        self.runID = runID
+        self.step = step
+        self.phase = phase
+        self.message = message
+        self.timestamp = timestamp
+        self.latency = latency
+    }
+}
+
+struct ComputerUseRun: Identifiable, Codable, Equatable {
+    let id: UUID
+    let task: String
+    let mode: ComputerUseMode
+    var status: ComputerUseRunStatus
+    var steps: [ComputerUseStep]
+    let startedAt: Date
+    var finishedAt: Date?
+    var finalMessage: String
+}
+
+struct ComputerUseFunctionCall {
+    let id: String
+    let name: String
+    let arguments: [String: Any]
+
+    var intent: String {
+        (arguments["intent"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+}
+
+struct ComputerUseInteraction {
+    let id: String
+    let outputText: String
+    let functionCalls: [ComputerUseFunctionCall]
+    let rawJSON: [String: Any]
+}
+
 struct ComputerControlResult {
     let ok: Bool
     let message: String
@@ -442,6 +541,8 @@ struct AppSettings: Codable, Equatable {
     static let defaultLiveModel = "gemini-3.1-flash-live-preview"
     static let defaultTeacherModel = "gemini-3.5-flash"
     static let defaultVisionModel = "gemini-3-flash-preview"
+    static let defaultComputerUseModel = "gemini-3.5-flash"
+    static let defaultComputerUseMaxSteps = 6
     static let defaultTTSModel = "gemini-3.1-flash-tts-preview"
     static let defaultTTSVoice = "Aoede"
     static let defaultEmbeddingModel = "gemini-embedding-2"

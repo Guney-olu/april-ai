@@ -62,13 +62,14 @@ You can choose another folder from the **Context** or **Settings** screen.
 
 ## Features
 
-- **Talk naturally**: use Gemini Live for low-latency voice. April speaks short answers out loud and keeps the real answer in chat where it belongs.
+- **Talk naturally**: use Gemini Live for low-latency voice. April speaks short answers out loud, keeps the real answer in chat, and can keep talking while tools are working.
 - **Share only what matters**: ask April to look at the screen or share frames during a Live session. It is not designed around permanent full-time screen surveillance.
 - **Automatic context**: drop files into `context/inbox`, index once, and April can reference them later from local search.
 - **Memory that grows**: sessions can become durable memories under your local `context/memory` folder. Delete bad memories whenever you want.
 - **Deep agents**: send expensive research, code/data analysis, and artifact generation to Gemini Managed Agents in a remote sandbox, then track outputs in Agent Lab.
 - **Grounded web search**: use Gemini Google Search grounding when the question needs current web facts.
 - **Local-control tools**: optional Accessibility tools can open apps, use native UI actions, run safe shortcuts, type, and move the mouse when you explicitly ask.
+- **Conversational Computer Use autopilot**: Live chat can run a bounded Gemini Computer Use loop for visual UI workflows and form filling. April now reports progress while it works, instead of going dead-silent like a toaster with anxiety.
 - **Cheap by default**: normal chat uses fast Gemini models. Heavy sandbox agents are there for work that actually needs compute, browsing, or files.
 - **Local-first project data**: context, memory, research outputs, indexes, and logs live in your chosen `context/` folder.
 
@@ -101,6 +102,21 @@ Agent Lab is for heavyweight tasks:
 - tasks April should track while you keep working.
 
 The normal assistant stays fast. When the work gets heavier, April can launch a managed sandbox agent and save the result under `context/research`.
+
+## Computer Use Autopilot
+
+When you explicitly ask April to do a visual task, Live can start a Gemini Computer Use loop: screenshot, propose an action, execute locally, screenshot again, repeat. It is meant for UI workflows, browser pages, custom app surfaces, and form filling where raw coordinate guessing was too brittle.
+
+Default policy is **Run until risky**. April can do reversible clicks, typing, scrolling, waits, and navigation, but pauses before sending, buying, deleting, submitting final forms, typing secrets, accepting terms, or changing security settings.
+
+While autopilot runs, April posts lightweight progress updates in chat and can speak short status lines:
+
+- **Looking**: reading the current screen.
+- **Clicking / Typing / Waiting**: executing the next reversible action.
+- **Checking result**: capturing the next screen state.
+- **Steering**: applying a correction you gave mid-run.
+
+The default Live autopilot run is capped at **6 steps** unless you explicitly ask for a longer run. This keeps the conversation responsive and prevents one messy UI task from turning into an archaeological expedition.
 
 ## Project Layout
 
