@@ -36,7 +36,9 @@ final class LiveToolExecutor {
     private let settings: () -> AppSettings
     private let activeMemorySessionIDs: () -> Set<String>
     private let onMemoryChanged: () async -> Void
+    private let onComputerUseProgress: (ComputerUseProgressEvent) -> Void
     private var mouseToolInFlight = false
+    private var activeComputerUseController: ComputerUseRunController?
 
     init(
         context: ContextLibrary,
@@ -45,7 +47,8 @@ final class LiveToolExecutor {
         gemini: @escaping () -> GeminiClient,
         settings: @escaping () -> AppSettings,
         activeMemorySessionIDs: @escaping () -> Set<String>,
-        onMemoryChanged: @escaping () async -> Void
+        onMemoryChanged: @escaping () async -> Void,
+        onComputerUseProgress: @escaping (ComputerUseProgressEvent) -> Void = { _ in }
     ) {
         self.context = context
         self.computerControl = computerControl
@@ -54,6 +57,7 @@ final class LiveToolExecutor {
         self.settings = settings
         self.activeMemorySessionIDs = activeMemorySessionIDs
         self.onMemoryChanged = onMemoryChanged
+        self.onComputerUseProgress = onComputerUseProgress
     }
 
     static let toolDeclarations: [[String: Any]] = [
@@ -164,6 +168,19 @@ final class LiveToolExecutor {
             ]
         ],
         [
+            "name": "run_computer_use_task",
+            "description": "Preferred tool for explicit visual UI control, clicking browser/custom UI targets, scrolling pages, or filling forms. Runs a bounded Gemini Computer Use autopilot loop: screenshot, decide next UI action, execute reversible action locally, screenshot again. Stops before risky final actions.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "task": ["type": "string", "description": "The explicit user task to complete on the current computer screen."],
+                    "mode": ["type": "string", "description": "desktop or browser. Use desktop by default."],
+                    "max_steps": ["type": "integer", "description": "Maximum autopilot steps, default 6, hard cap 25. Use a larger value only when the user explicitly asks for a longer run."]
+                ],
+                "required": ["task"]
+            ]
+        ],
+        [
             "name": "screen_geometry",
             "description": "Return the latest Live screen frame geometry, display bounds, backing scale factor, and current mouse position. Call this before mouse fallback when coordinate accuracy is uncertain.",
             "parameters": [
@@ -173,7 +190,7 @@ final class LiveToolExecutor {
         ],
         [
             "name": "move_mouse_to_target",
-            "description": "The only Live mouse movement tool. Captures the screen, overlays a grid, asks gemini-3-flash-preview for the target image coordinates, then moves the cursor there. It does not click and does not save screenshots.",
+            "description": "Legacy fallback only. Moves the cursor to a visible target using a gridded screenshot. Prefer run_computer_use_task for clicking, scrolling, forms, browser/custom UI, and any multi-step visual control. This tool does not click.",
             "parameters": [
                 "type": "object",
                 "properties": [
@@ -223,7 +240,7 @@ final class LiveToolExecutor {
             "parameters": [
                 "type": "object",
                 "properties": [
-                    "action": ["type": "string", "description": "Optional named action: copy, paste, cut, select_all, undo, redo, find, spotlight, cmd_space, open_location, new_tab, close_tab, next_tab, previous_tab, close_window, quit_app, space_left, space_right, return, tab, escape, delete, left, right, up, down."],
+                    "action": ["type": "string", "description": "Optional named action: copy, paste, cut, select_all, undo, redo, find, spotlight, cmd_space, open_location, new_tab, close_tab, next_tab, previous_tab, close_window, quit_app, space_left, space_right, page_down, page_up, space, return, tab, escape, delete, left, right, up, down."],
                     "key": ["type": "string", "description": "Optional key name for a dynamic shortcut, such as right, left, space, tab, a, c, l."],
                     "modifiers": ["type": "array", "items": ["type": "string"], "description": "Optional modifiers for key: cmd, control, shift, option."]
                 ]
@@ -408,6 +425,17 @@ final class LiveToolExecutor {
                     response = try await startAgentTask(args: call.args)
                 case "teacher_plan_control":
                     response = try await teacherPlanControl(args: call.args)
+                case "run_computer_use_task":
+                    if let activeComputerUseController {
+                        response = steerComputerUseTask(args: call.args, controller: activeComputerUseController)
+                        break
+                    }
+                    guard beginMouseTool(call.name) else {
+                        response = Self.mouseToolBusyRefusal(call.name)
+                        break
+                    }
+                    defer { endMouseTool() }
+                    response = await runComputerUseTask(args: call.args)
                 case "screen_geometry":
                     response = computerControl.screenGeometry().toolResponse
                 case "move_mouse_to_target":
@@ -767,7 +795,13 @@ final class LiveToolExecutor {
         \(context.isEmpty ? "None." : context)
 
         Available tools:
-        \(availableTools.isEmpty ? "Use April AI's existing memory, search, AX, keyboard, mouse, and screen_geometry tools." : availableTools.joined(separator: ", "))
+        \(teacherAvailableTools(availableTools).joined(separator: ", "))
+
+        Tool strategy:
+        - For native macOS controls, prefer AX tools.
+        - For browser pages, custom UI, page scrolling, visual clicking, and form filling, prefer run_computer_use_task.
+        - Avoid recommending move_mouse_to_target unless the task is only to move the visible cursor without clicking.
+        - Avoid recommending unsupported shortcuts; page_down, page_up, space, arrow keys, and safe command/control shortcuts are available.
 
         Last error:
         \(lastError.isEmpty ? "None." : lastError)
@@ -798,6 +832,83 @@ final class LiveToolExecutor {
             "plan": parsed ?? ["raw": raw],
             "parsed_json": parsed != nil
         ]
+    }
+
+    private func teacherAvailableTools(_ provided: [String]) -> [String] {
+        var tools = provided
+        for required in ["run_computer_use_task", "ax_find", "ax_click", "keyboard_shortcut", "screen_geometry"] where !tools.contains(required) {
+            tools.append(required)
+        }
+        return tools.isEmpty
+            ? ["run_computer_use_task", "ax_find", "ax_click", "keyboard_shortcut", "screen_geometry"]
+            : tools
+    }
+
+    private func runComputerUseTask(args: [String: Any]) async -> [String: Any] {
+        let task = rawStringArg("task", in: args).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else {
+            return ["ok": false, "message": "task is required"]
+        }
+
+        let rawMode = stringArg("mode", in: args).lowercased()
+        let mode = ComputerUseMode(rawValue: rawMode) ?? .desktop
+        let maxSteps = intArg("max_steps", in: args) ?? AppSettings.defaultComputerUseMaxSteps
+        let service = ComputerUseAgentService(
+            gemini: gemini(),
+            computerControl: computerControl,
+            logsURL: context.logsURL
+        )
+        let controller = ComputerUseRunController()
+        activeComputerUseController = controller
+        defer { activeComputerUseController = nil }
+        let result = await service.run(
+            task: task,
+            mode: mode,
+            maxSteps: maxSteps,
+            controller: controller,
+            progress: onComputerUseProgress
+        )
+        return result
+            .mergingMetadata([
+                "tool": "run_computer_use_task",
+                "mode": mode.rawValue,
+                "requested_max_steps": maxSteps,
+                "model": AppSettings.defaultComputerUseModel,
+                "policy": "run_until_risky"
+            ])
+            .toolResponse
+    }
+
+    private func steerComputerUseTask(args: [String: Any], controller: ComputerUseRunController) -> [String: Any] {
+        let task = rawStringArg("task", in: args).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else {
+            return ["ok": false, "message": "task is required to steer active Computer Use"]
+        }
+
+        if isStopComputerUseDirective(task) {
+            controller.requestStop(reason: task)
+            return [
+                "ok": true,
+                "tool": "run_computer_use_task",
+                "steered": true,
+                "stop_requested": true,
+                "message": "Stop instruction sent to the active Computer Use run."
+            ]
+        }
+
+        controller.steer(task)
+        return [
+            "ok": true,
+            "tool": "run_computer_use_task",
+            "steered": true,
+            "message": "Instruction injected into the active Computer Use run. It will use this on the next step.",
+            "instruction": task
+        ]
+    }
+
+    private func isStopComputerUseDirective(_ task: String) -> Bool {
+        let normalized = task.lowercased()
+        return ["stop", "cancel", "pause", "abort", "halt"].contains { normalized.contains($0) }
     }
 
     private func moveMouseToTarget(args: [String: Any]) async throws -> [String: Any] {

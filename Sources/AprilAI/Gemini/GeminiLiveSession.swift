@@ -39,6 +39,7 @@ final class GeminiLiveSession: ObservableObject {
     private var lastMemoryContext = ""
     private var cancelledToolCallIDs = Set<String>()
     private var toolCallTasksByID: [String: Task<Void, Never>] = [:]
+    private var toolCallNamesByID: [String: String] = [:]
     private var keepAliveTask: Task<Void, Never>?
     private var lastServerEventAt = Date()
     private var audioEngineConfigObserver: NSObjectProtocol?
@@ -190,6 +191,7 @@ final class GeminiLiveSession: ObservableObject {
         cancelledToolCallIDs.removeAll()
         toolCallTasksByID.values.forEach { $0.cancel() }
         toolCallTasksByID.removeAll()
+        toolCallNamesByID.removeAll()
         clearSessionResumptionHandle(reason: "manual_disconnect")
         outputSuppressionActive = false
         shouldResumeMicAfterOutput = false
@@ -518,13 +520,26 @@ final class GeminiLiveSession: ObservableObject {
             handleToolCall(toolCall)
         } else if let cancellation = json["toolCallCancellation"] as? [String: Any] {
             let ids = cancellation["ids"] as? [String] ?? []
-            cancelledToolCallIDs.formUnion(ids)
+            var cancelledIDs: [String] = []
+            var ignoredIDs: [String] = []
             for id in ids {
+                if toolCallNamesByID[id] == "run_computer_use_task" {
+                    ignoredIDs.append(id)
+                    continue
+                }
+                cancelledToolCallIDs.insert(id)
+                cancelledIDs.append(id)
                 toolCallTasksByID[id]?.cancel()
                 toolCallTasksByID.removeValue(forKey: id)
+                toolCallNamesByID.removeValue(forKey: id)
             }
-            onStatus?("Live cancelled \(ids.count) tool call\(ids.count == 1 ? "" : "s").")
-            log("live_tool_cancelled", ["ids": ids])
+            if !cancelledIDs.isEmpty {
+                onStatus?("Live cancelled \(cancelledIDs.count) tool call\(cancelledIDs.count == 1 ? "" : "s").")
+            }
+            if !ignoredIDs.isEmpty {
+                onStatus?("Computer Use is still running.")
+            }
+            log("live_tool_cancelled", ["ids": cancelledIDs, "ignored_ids": ignoredIDs])
         }
     }
 
@@ -558,6 +573,7 @@ final class GeminiLiveSession: ObservableObject {
             defer {
                 for call in calls {
                     self.toolCallTasksByID.removeValue(forKey: call.id)
+                    self.toolCallNamesByID.removeValue(forKey: call.id)
                 }
             }
             guard !Task.isCancelled else {
@@ -586,6 +602,7 @@ final class GeminiLiveSession: ObservableObject {
         }
         for call in calls {
             toolCallTasksByID[call.id] = task
+            toolCallNamesByID[call.id] = call.name
         }
     }
 

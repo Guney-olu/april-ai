@@ -28,13 +28,19 @@ func shortcut(for action: String) -> Shortcut? {
         return shortcutFromKey("left", modifiers: ["control"])
     case "window_next", "next_window":
         return shortcutFromKey("`", modifiers: ["cmd"])
+    case "page_down", "pagedown":
+        return shortcutFromKey("pagedown", modifiers: [])
+    case "page_up", "pageup":
+        return shortcutFromKey("pageup", modifiers: [])
+    case "space":
+        return shortcutFromKey("space", modifiers: [])
     default:
         return nil
     }
 }
 
 func shortcutFromKey(_ key: String, modifiers: [String]) -> Shortcut? {
-    let table = ["space": 49, "right": 124, "left": 123, "tab": 48, "c": 8, "`": 50, "l": 37]
+    let table = ["space": 49, "right": 124, "left": 123, "tab": 48, "c": 8, "`": 50, "l": 37, "pageup": 116, "pagedown": 121]
     guard let keyCode = table[key] else { return nil }
     return Shortcut(keyName: key, keyCode: keyCode, modifiers: modifiers)
 }
@@ -66,6 +72,9 @@ assertShortcut("cmd_space", keyName: "space", keyCode: 49, modifiers: ["cmd"])
 assertShortcut("space_right", keyName: "right", keyCode: 124, modifiers: ["control"])
 assertShortcut("space_left", keyName: "left", keyCode: 123, modifiers: ["control"])
 assertShortcut("window_next", keyName: "`", keyCode: 50, modifiers: ["cmd"])
+assertShortcut("page_down", keyName: "pagedown", keyCode: 121, modifiers: [])
+assertShortcut("page_up", keyName: "pageup", keyCode: 116, modifiers: [])
+assertShortcut("space", keyName: "space", keyCode: 49, modifiers: [])
 assertDynamic("right", modifiers: ["control"], keyCode: 124)
 assertDynamic("space", modifiers: ["cmd"], keyCode: 49)
 assertDynamic("l", modifiers: ["cmd"], keyCode: 37)

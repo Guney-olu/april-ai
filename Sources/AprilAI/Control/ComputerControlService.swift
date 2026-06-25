@@ -449,6 +449,11 @@ final class ComputerControlService {
         case "quit_app": return shortcutFromKey("q", modifiers: ["cmd"])
         case "space_left", "screen_left": return shortcutFromKey("left", modifiers: ["control"])
         case "space_right", "screen_right": return shortcutFromKey("right", modifiers: ["control"])
+        case "page_down", "pagedown": return shortcutFromKey("pagedown", modifiers: [])
+        case "page_up", "pageup": return shortcutFromKey("pageup", modifiers: [])
+        case "home": return shortcutFromKey("home", modifiers: [])
+        case "end": return shortcutFromKey("end", modifiers: [])
+        case "space": return shortcutFromKey("space", modifiers: [])
         case "return", "enter": return shortcutFromKey("return", modifiers: [])
         case "tab": return shortcutFromKey("tab", modifiers: [])
         case "escape", "esc": return shortcutFromKey("escape", modifiers: [])
@@ -540,7 +545,8 @@ final class ComputerControlService {
             "0": 29, "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "return": 36,
             "enter": 36, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43,
             "/": 44, "n": 45, "m": 46, ".": 47, "tab": 48, "space": 49, "`": 50, "delete": 51,
-            "backspace": 51, "escape": 53, "esc": 53, "left": 123, "right": 124, "down": 125, "up": 126
+            "backspace": 51, "escape": 53, "esc": 53, "home": 115, "pageup": 116, "end": 119,
+            "pagedown": 121, "left": 123, "right": 124, "down": 125, "up": 126
         ]
         return table[key]
     }
