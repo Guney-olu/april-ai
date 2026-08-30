@@ -29,7 +29,7 @@ final class VoiceRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         isRecording = true
     }
 
-    func stop() throws -> Data {
+    func stop() throws -> URL {
         guard let recorder, let outputURL else {
             throw VoiceRecorderError.notRecording
         }
@@ -38,7 +38,7 @@ final class VoiceRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         self.recorder = nil
         isRecording = false
 
-        return try Data(contentsOf: outputURL)
+        return outputURL
     }
 }
 

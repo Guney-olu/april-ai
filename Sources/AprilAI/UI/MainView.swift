@@ -29,6 +29,8 @@ struct MainView: View {
                 switch state.selectedTab {
                 case .chat:
                     ChatView()
+                case .local:
+                    LocalView()
                 case .context:
                     ContextView()
                 case .research:
@@ -46,6 +48,7 @@ struct MainView: View {
     private func icon(for tab: WorkspaceTab) -> String {
         switch tab {
         case .chat: "bubble.left.and.bubble.right"
+        case .local: "desktopcomputer"
         case .context: "folder"
         case .research: "doc.text.magnifyingglass"
         case .memory: "archivebox"

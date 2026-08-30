@@ -3,6 +3,7 @@ import Foundation
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
     case chat = "Chat"
+    case local = "Local"
     case context = "Context"
     case research = "Research"
     case memory = "Memory"
@@ -17,6 +18,12 @@ enum ChatRole: String, Codable {
     case system
 }
 
+enum ChatProvider: String, Codable, Equatable {
+    case gemini
+    case local
+    case live
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable {
     let id: UUID
     let role: ChatRole
@@ -24,14 +31,22 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     let spokenSummary: String
     let references: [ContextReference]
     let createdAt: Date
+    let provider: ChatProvider?
 
-    init(role: ChatRole, content: String, spokenSummary: String = "", references: [ContextReference] = []) {
+    init(
+        role: ChatRole,
+        content: String,
+        spokenSummary: String = "",
+        references: [ContextReference] = [],
+        provider: ChatProvider? = nil
+    ) {
         self.id = UUID()
         self.role = role
         self.content = content
         self.spokenSummary = spokenSummary
         self.references = references
         self.createdAt = Date()
+        self.provider = provider
     }
 }
 
@@ -536,6 +551,45 @@ struct ScreenFrame {
     let geometry: ScreenFrameGeometry
 }
 
+struct LocalModelSettings: Codable, Equatable {
+    static let defaultUnslothBaseURL = "http://127.0.0.1:8888/v1"
+    static let defaultModel = "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive:Q4_K_M"
+    static let defaultCartesiaModel = "sonic-3.6"
+    static let defaultCartesiaVoiceID = "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
+
+    var isEnabled = true
+    var unslothBaseURL = Self.defaultUnslothBaseURL
+    var model = Self.defaultModel
+    var apiKeyStored = false
+    var cartesiaModel = Self.defaultCartesiaModel
+    var cartesiaVoiceID = Self.defaultCartesiaVoiceID
+    var cartesiaAPIKeyStored = false
+}
+
+enum LocalServiceKind: String, CaseIterable, Identifiable {
+    case unsloth = "Unsloth"
+    case speechRecognition = "Speech Recognition"
+    case cartesia = "Cartesia Sonic"
+
+    var id: String { rawValue }
+}
+
+struct LocalServiceHealth: Identifiable, Equatable {
+    let service: LocalServiceKind
+    var isReachable: Bool
+    var detail: String
+    var checkedAt: Date?
+
+    var id: String { service.id }
+
+    init(service: LocalServiceKind, isReachable: Bool = false, detail: String = "Not checked.", checkedAt: Date? = nil) {
+        self.service = service
+        self.isReachable = isReachable
+        self.detail = detail
+        self.checkedAt = checkedAt
+    }
+}
+
 struct AppSettings: Codable, Equatable {
     static let defaultTextModel = "gemini-3.5-flash"
     static let defaultLiveModel = "gemini-3.1-flash-live-preview"
@@ -558,6 +612,7 @@ struct AppSettings: Codable, Equatable {
     var contextFolderPath: String = ""
     var speakReplies: Bool = true
     var useGoogleSearchForResearch: Bool = true
+    var local = LocalModelSettings()
 
     private static let storageKey = "AprilAI.AppSettings"
     private static let legacyStorageKey = "PolymathAssistant.AppSettings"
@@ -572,6 +627,7 @@ struct AppSettings: Codable, Equatable {
         case contextFolderPath
         case speakReplies
         case useGoogleSearchForResearch
+        case local
     }
 
     init() {}
@@ -589,6 +645,8 @@ struct AppSettings: Codable, Equatable {
         self.contextFolderPath = try container.decodeIfPresent(String.self, forKey: .contextFolderPath) ?? ""
         self.speakReplies = try container.decodeIfPresent(Bool.self, forKey: .speakReplies) ?? true
         self.useGoogleSearchForResearch = try container.decodeIfPresent(Bool.self, forKey: .useGoogleSearchForResearch) ?? true
+        self.local = try container.decodeIfPresent(LocalModelSettings.self, forKey: .local) ?? LocalModelSettings()
+
     }
 
     static func load() -> AppSettings {

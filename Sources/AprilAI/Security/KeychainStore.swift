@@ -3,6 +3,8 @@ import Security
 
 final class KeychainStore {
     private let service = "AprilAI.GeminiAPIKey"
+    private let localService = "AprilAI.LocalModelAPIKey"
+    private let cartesiaService = "AprilAI.CartesiaAPIKey"
     private let legacyService = "PolymathAssistant.GeminiAPIKey"
     private let account = "default"
 
@@ -37,6 +39,26 @@ final class KeychainStore {
     }
 
     func saveAPIKey(_ key: String) throws {
+        try save(key, service: service)
+    }
+
+    func readLocalAPIKey() -> String {
+        readAPIKey(service: localService)
+    }
+
+    func saveLocalAPIKey(_ key: String) throws {
+        try save(key, service: localService)
+    }
+
+    func readCartesiaAPIKey() -> String {
+        readAPIKey(service: cartesiaService)
+    }
+
+    func saveCartesiaAPIKey(_ key: String) throws {
+        try save(key, service: cartesiaService)
+    }
+
+    private func save(_ key: String, service: String) throws {
         let data = Data(key.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

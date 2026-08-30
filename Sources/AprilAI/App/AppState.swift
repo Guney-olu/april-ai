@@ -5,6 +5,7 @@ import Foundation
 final class AppState: ObservableObject {
     @Published var selectedTab: WorkspaceTab = .chat
     @Published var messages: [ChatMessage] = []
+    @Published var localMessages: [ChatMessage] = []
     @Published var settings = AppSettings()
     @Published var apiKeyInput = ""
     @Published var draft = ""
@@ -28,6 +29,11 @@ final class AppState: ObservableObject {
     @Published var isLiveScreenSharing = false
     @Published var accessibilityTrusted = false
     @Published var screenCaptureTrusted = false
+    @Published var localAPIKeyInput = ""
+    @Published var cartesiaAPIKeyInput = ""
+    @Published var localServiceHealth = LocalServiceKind.allCases.map { LocalServiceHealth(service: $0) }
+    @Published var localStreamingReply = ""
+    @Published var isLocalBusy = false
 
     let context: ContextLibrary
     let speech = SpeechService()
@@ -46,6 +52,8 @@ final class AppState: ObservableObject {
     private var isAutoSavingMemory = false
     private var pendingLiveMemoryRefresh = false
     private var isSpeakingComputerUseProgress = false
+    private var localConversation: [LocalChatTurn] = []
+    private var memoryGenerationProvider: ChatProvider?
 
     init() {
         let loadedSettings = AppSettings.load()
@@ -59,7 +67,11 @@ final class AppState: ObservableObject {
             fatalError("Could not create context library: \(error.localizedDescription)")
         }
         apiKeyInput = keychain.readAPIKey()
+        localAPIKeyInput = keychain.readLocalAPIKey()
+        cartesiaAPIKeyInput = keychain.readCartesiaAPIKey()
         settings.apiKeyStored = !apiKeyInput.isEmpty
+        settings.local.apiKeyStored = !localAPIKeyInput.isEmpty
+        settings.local.cartesiaAPIKeyStored = !cartesiaAPIKeyInput.isEmpty
         settings.save()
         liveToolExecutor = LiveToolExecutor(
             context: context,
@@ -116,6 +128,55 @@ final class AppState: ObservableObject {
             status = "Settings saved."
         } catch {
             status = error.localizedDescription
+        }
+    }
+
+    func saveLocalSettings(_ local: LocalModelSettings, apiKey: String, cartesiaAPIKey: String) {
+        do {
+            var cleaned = local
+            cleaned.unslothBaseURL = cleaned.unslothBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            cleaned.model = cleaned.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            cleaned.cartesiaModel = cleaned.cartesiaModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            cleaned.cartesiaVoiceID = cleaned.cartesiaVoiceID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleaned.unslothBaseURL.isEmpty { cleaned.unslothBaseURL = LocalModelSettings.defaultUnslothBaseURL }
+            if cleaned.model.isEmpty { cleaned.model = LocalModelSettings.defaultModel }
+            if cleaned.cartesiaModel.isEmpty { cleaned.cartesiaModel = LocalModelSettings.defaultCartesiaModel }
+            if cleaned.cartesiaVoiceID.isEmpty { cleaned.cartesiaVoiceID = LocalModelSettings.defaultCartesiaVoiceID }
+
+            localAPIKeyInput = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            cartesiaAPIKeyInput = cartesiaAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            try keychain.saveLocalAPIKey(localAPIKeyInput)
+            try keychain.saveCartesiaAPIKey(cartesiaAPIKeyInput)
+            cleaned.apiKeyStored = !localAPIKeyInput.isEmpty
+            cleaned.cartesiaAPIKeyStored = !cartesiaAPIKeyInput.isEmpty
+            settings.local = cleaned
+            settings.save()
+            status = "Local settings saved."
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func testLocalServices() {
+        Task {
+            isLocalBusy = true
+            status = "Checking local services..."
+            let local = settings.local
+            async let unsloth = LocalAIClient(
+                baseURL: local.unslothBaseURL,
+                apiKey: localAPIKeyInput,
+                model: local.model
+            ).testConnection()
+            async let speechRecognition = SystemTranscriptionClient().status()
+            async let cartesia = CartesiaSpeechClient(
+                apiKey: cartesiaAPIKeyInput,
+                model: local.cartesiaModel,
+                voiceID: local.cartesiaVoiceID
+            ).testConnection()
+            localServiceHealth = await [unsloth, speechRecognition, cartesia]
+            let online = localServiceHealth.filter(\.isReachable).count
+            status = "Local services checked: \(online)/3 ready."
+            isLocalBusy = false
         }
     }
 
@@ -238,6 +299,131 @@ final class AppState: ObservableObject {
                     await self.speakWithGemini(reply.speakable)
                 }
             }
+        }
+    }
+
+    func sendLocalDraft() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        draft = ""
+        sendLocal(text)
+    }
+
+    func sendLocal(_ text: String) {
+        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+        guard settings.local.isEnabled else {
+            appendMessage(ChatMessage(role: .system, content: "Local mode is disabled in Settings.", provider: .local))
+            return
+        }
+
+        startLocalInteractionLogIfNeeded()
+        appendMessage(ChatMessage(role: .user, content: prompt, provider: .local))
+        localConversation.append(LocalChatTurn(role: "user", content: prompt))
+        let history = Array(localConversation.dropLast())
+
+        Task {
+            isLocalBusy = true
+            localStreamingReply = ""
+            status = "Local model is thinking..."
+            logInteraction("local_chat_started", [
+                "model": settings.local.model,
+                "base_url": settings.local.unslothBaseURL,
+                "tools": ["web_search", "python", "terminal"]
+            ])
+            defer { isLocalBusy = false }
+
+            let references = context.search(prompt)
+            let queryEmbedding = apiKeyInput.isEmpty ? nil : try? await gemini().embedText(
+                prompt,
+                title: "Local user query",
+                isQuery: true,
+                embeddingModel: settings.embeddingModel,
+                dimensions: settings.embeddingDimensions
+            )
+            let memoryResults = context.searchMemories(
+                prompt,
+                embedding: queryEmbedding,
+                limit: 6,
+                sessionIDs: activeMemorySessionIDs
+            )
+            let localPrompt = Prompts.localChat(userPrompt: prompt, references: references, memories: memoryResults)
+            let client = localAI()
+
+            do {
+                for try await event in client.streamChat(system: Prompts.system, prompt: localPrompt, history: history) {
+                    switch event {
+                    case .text(let chunk):
+                        localStreamingReply += chunk
+                    case .toolActivity(let detail):
+                        appendMessage(ChatMessage(role: .system, content: detail, provider: .local))
+                        logInteraction("local_server_tool_activity", ["detail": detail])
+                    }
+                }
+                let response = localStreamingReply.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !response.isEmpty else { throw LocalServiceError.emptyResponse }
+                let speakable = AssistantReply.shortSpeakable(from: response)
+                let displayedReferences = references + memoryResults.map {
+                    ContextReference(source: "Memory: \($0.item.type.label)", snippet: $0.item.content)
+                }
+                appendMessage(ChatMessage(
+                    role: .assistant,
+                    content: response,
+                    spokenSummary: speakable,
+                    references: displayedReferences,
+                    provider: .local
+                ))
+                localConversation.append(LocalChatTurn(role: "assistant", content: response))
+                localStreamingReply = ""
+                status = "Local reply ready."
+                if settings.speakReplies {
+                    await speakWithCartesia(speakable)
+                }
+            } catch {
+                localStreamingReply = ""
+                let message = "Local chat failed: \(error.localizedDescription)"
+                appendMessage(ChatMessage(role: .system, content: message, provider: .local))
+                status = message
+                logInteraction("local_chat_failed", ["error": error.localizedDescription])
+            }
+        }
+    }
+
+    func startOrStopLocalVoice() {
+        if voiceRecorder.isRecording {
+            stopLocalVoiceAndAsk()
+            return
+        }
+        do {
+            try voiceRecorder.start()
+            status = "Recording local voice turn..."
+        } catch {
+            status = error.localizedDescription
+            appendMessage(ChatMessage(role: .system, content: error.localizedDescription, provider: .local))
+        }
+    }
+
+    private func stopLocalVoiceAndAsk() {
+        do {
+            let audioURL = try voiceRecorder.stop()
+            Task {
+                isLocalBusy = true
+                status = "Transcribing locally..."
+                defer { isLocalBusy = false }
+                defer { try? FileManager.default.removeItem(at: audioURL) }
+                do {
+                    let transcript = try await SystemTranscriptionClient().transcribe(audioURL: audioURL)
+                    logInteraction("local_voice_transcribed", ["characters": transcript.count])
+                    sendLocal(transcript)
+                } catch {
+                    let message = "Local transcription failed: \(error.localizedDescription)"
+                    appendMessage(ChatMessage(role: .system, content: message, provider: .local))
+                    status = message
+                    logInteraction("local_voice_transcription_failed", ["error": error.localizedDescription])
+                }
+            }
+        } catch {
+            status = error.localizedDescription
         }
     }
 
@@ -401,7 +587,9 @@ final class AppState: ObservableObject {
     func stopVoiceAndAsk() {
         Task {
             await self.runBusy("Analyzing voice...") {
-                let audio = try self.voiceRecorder.stop()
+                let audioURL = try self.voiceRecorder.stop()
+                defer { try? FileManager.default.removeItem(at: audioURL) }
+                let audio = try Data(contentsOf: audioURL)
                 let prompt = """
                 The attached audio is the user's spoken request. Transcribe it mentally, answer it, and challenge weak reasoning.
                 If the user asked for local control, explain that control is available through scoped Live tools; otherwise provide a draft or checklist.
@@ -462,10 +650,23 @@ final class AppState: ObservableObject {
 
         Task {
             await self.runBusy("Drafting session memory...") {
-                let raw = try await self.gemini().generateText(
-                    system: Prompts.system,
-                    prompt: Prompts.sessionMemoryReview(transcript: transcript)
-                )
+                let raw: String
+                if self.memoryGenerationProvider == .local {
+                    raw = try await self.localAI().complete(
+                        system: Prompts.system,
+                        prompt: Prompts.sessionMemoryReview(transcript: transcript)
+                    )
+                } else if !self.apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    raw = try await self.gemini().generateText(
+                        system: Prompts.system,
+                        prompt: Prompts.sessionMemoryReview(transcript: transcript)
+                    )
+                } else {
+                    raw = try await self.localAI().complete(
+                        system: Prompts.system,
+                        prompt: Prompts.sessionMemoryReview(transcript: transcript)
+                    )
+                }
                 let review = try SessionMemoryReview.parse(raw)
                 self.sessionMemoryTitle = review.title
                 self.sessionMemorySummary = review.summary
@@ -846,6 +1047,14 @@ final class AppState: ObservableObject {
         GeminiClient(apiKey: apiKeyInput, model: settings.model)
     }
 
+    private func localAI() -> LocalAIClient {
+        LocalAIClient(
+            baseURL: settings.local.unslothBaseURL,
+            apiKey: localAPIKeyInput,
+            model: settings.local.model
+        )
+    }
+
     private func configureLiveSessionCallbacks() {
         liveSession.onStatus = { [weak self] message in
             Task { @MainActor in
@@ -947,6 +1156,23 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func speakWithCartesia(_ text: String) async {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        do {
+            let audio = try await CartesiaSpeechClient(
+                apiKey: cartesiaAPIKeyInput,
+                model: settings.local.cartesiaModel,
+                voiceID: settings.local.cartesiaVoiceID
+            ).generateSpeech(text: cleaned)
+            try speech.playAudio(audio)
+            logInteraction("cartesia_speech_played", ["characters": cleaned.count, "model": settings.local.cartesiaModel])
+        } catch {
+            status = "Cartesia speech failed: \(error.localizedDescription)"
+            logInteraction("cartesia_speech_failed", ["error": error.localizedDescription])
+        }
+    }
+
     private func embeddingForMemory(content: String, title: String) async throws -> [Float] {
         try await gemini().embedText(
             content,
@@ -971,15 +1197,20 @@ final class AppState: ObservableObject {
     }
 
     private func appendMessage(_ message: ChatMessage) {
-        messages.append(message)
+        if message.provider == .local {
+            localMessages.append(message)
+        } else {
+            messages.append(message)
+        }
         logInteraction("chat_message", [
             "role": message.role.rawValue,
+            "provider": message.provider?.rawValue ?? "default",
             "content": message.content,
             "spoken_summary": message.spokenSummary,
             "references": message.references.map { ["source": $0.source, "snippet": $0.snippet] }
         ])
         if message.role == .user || message.role == .assistant {
-            recordSessionTurn(role: message.role, content: message.content)
+            recordSessionTurn(role: message.role, content: message.content, provider: message.provider)
         }
     }
 
@@ -1018,9 +1249,18 @@ final class AppState: ObservableObject {
         logInteraction("live_log_started", ["context_root": context.rootURL.path])
     }
 
-    private func recordSessionTurn(role: ChatRole, content: String) {
+    private func startLocalInteractionLogIfNeeded() {
+        guard interactionLogger == nil else { return }
+        interactionLogger = try? InteractionLogger(logsURL: context.logsURL)
+        logInteraction("local_log_started", ["context_root": context.rootURL.path])
+    }
+
+    private func recordSessionTurn(role: ChatRole, content: String, provider: ChatProvider?) {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if let provider {
+            memoryGenerationProvider = provider
+        }
         sessionTurns.append(SessionTurn(role: role, content: trimmed, createdAt: Date()))
         if sessionTurns.count > 80 {
             let overflow = sessionTurns.count - 80
@@ -1086,7 +1326,7 @@ final class AppState: ObservableObject {
     }
 
     private func scheduleAutoMemoryExtraction() {
-        guard !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || settings.local.isEnabled else { return }
         guard sessionTurns.count - lastAutoMemoryTurnCount >= 4 else { return }
 
         autoMemoryTask?.cancel()
@@ -1102,7 +1342,7 @@ final class AppState: ObservableObject {
 
     private func autoSaveSessionMemoryIfNeeded() async {
         guard !isAutoSavingMemory else { return }
-        guard !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || settings.local.isEnabled else { return }
 
         let currentTurnCount = sessionTurns.count
         guard currentTurnCount - lastAutoMemoryTurnCount >= 4 else { return }
@@ -1120,10 +1360,23 @@ final class AppState: ObservableObject {
         defer { isAutoSavingMemory = false }
 
         do {
-            let raw = try await gemini().generateText(
-                system: Prompts.system,
-                prompt: Prompts.sessionMemoryAutoSave(transcript: transcript)
-            )
+            let raw: String
+            if memoryGenerationProvider == .local {
+                raw = try await localAI().complete(
+                    system: Prompts.system,
+                    prompt: Prompts.sessionMemoryAutoSave(transcript: transcript)
+                )
+            } else if !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                raw = try await gemini().generateText(
+                    system: Prompts.system,
+                    prompt: Prompts.sessionMemoryAutoSave(transcript: transcript)
+                )
+            } else {
+                raw = try await localAI().complete(
+                    system: Prompts.system,
+                    prompt: Prompts.sessionMemoryAutoSave(transcript: transcript)
+                )
+            }
             let review = try SessionMemoryReview.parse(raw)
             let candidates = uniqueAutoMemoryCandidates(from: review.candidates)
 
