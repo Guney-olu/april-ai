@@ -33,5 +33,8 @@ jobs:
       - name: Memory brain smoke
         run: swift scripts/smoke-memory-brain.swift
 
+      - name: Local mode smoke
+        run: swift scripts/smoke-local-mode.swift
+
       - name: Parse Live smoke script
         run: swiftc -parse scripts/smoke-live.swift

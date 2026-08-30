@@ -8,6 +8,11 @@ struct SettingsView: View {
     @State private var speakRepliesDraft = true
     @State private var searchGroundingDraft = true
     @State private var showAPIKey = false
+    @State private var localSettingsDraft = LocalModelSettings()
+    @State private var localAPIKeyDraft = ""
+    @State private var showLocalAPIKey = false
+    @State private var cartesiaAPIKeyDraft = ""
+    @State private var showCartesiaAPIKey = false
     @State private var didLoadDrafts = false
 
     private let textModels = [
@@ -157,12 +162,84 @@ struct SettingsView: View {
                     .padding(10)
                 }
 
+                GroupBox("Local Model") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Enable Local tab", isOn: $localSettingsDraft.isEnabled)
+
+                        Text("Unsloth API key")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            AppKitTextInput(
+                                text: $localAPIKeyDraft,
+                                placeholder: "sk-unsloth-...",
+                                isSecure: !showLocalAPIKey
+                            )
+                            .frame(height: 28)
+                            Button(showLocalAPIKey ? "Hide" : "Show") { showLocalAPIKey.toggle() }
+                        }
+
+                        endpointField("Unsloth base URL", text: $localSettingsDraft.unslothBaseURL)
+                        endpointField("Local model", text: $localSettingsDraft.model)
+                        Text("Cartesia API key")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            AppKitTextInput(
+                                text: $cartesiaAPIKeyDraft,
+                                placeholder: "sk_car_...",
+                                isSecure: !showCartesiaAPIKey
+                            )
+                            .frame(height: 28)
+                            Button(showCartesiaAPIKey ? "Hide" : "Show") { showCartesiaAPIKey.toggle() }
+                        }
+                        endpointField("Cartesia model", text: $localSettingsDraft.cartesiaModel)
+                        endpointField("Cartesia voice ID", text: $localSettingsDraft.cartesiaVoiceID)
+
+                        Text("Voice input uses macOS Speech Recognition. Sonic speech uses Cartesia's API directly, so there is no local TTS server or model download.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text("Local chat always enables the Unsloth server's web search, Python, and terminal tools. Those tools run on that server; they do not receive April's macOS control permissions.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            Button("Use Local Defaults") {
+                                localSettingsDraft = LocalModelSettings()
+                            }
+                            Button("Test Local Services") {
+                                state.saveLocalSettings(localSettingsDraft, apiKey: localAPIKeyDraft, cartesiaAPIKey: cartesiaAPIKeyDraft)
+                                state.testLocalServices()
+                            }
+                            Button("Save Local Settings") {
+                                state.saveLocalSettings(localSettingsDraft, apiKey: localAPIKeyDraft, cartesiaAPIKey: cartesiaAPIKeyDraft)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+
+                        ForEach(state.localServiceHealth) { health in
+                            HStack(spacing: 7) {
+                                Image(systemName: health.isReachable ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(health.isReachable ? .green : .secondary)
+                                Text(health.service.rawValue)
+                                    .font(.caption.weight(.semibold))
+                                Text(health.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    .padding(10)
+                }
+
                 GroupBox("Behavior") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Speak short replies with Gemini Aoede voice", isOn: $speakRepliesDraft)
+                        Toggle("Speak short replies", isOn: $speakRepliesDraft)
                         Toggle("Use Google Search grounding in research mode", isOn: $searchGroundingDraft)
 
-                        Text("Speech uses \(AppSettings.defaultTTSModel) with the \(AppSettings.defaultTTSVoice) voice. The app speaks only the short response; the full answer stays in chat.")
+                        Text("Gemini chat uses \(AppSettings.defaultTTSModel) with the \(AppSettings.defaultTTSVoice) voice. Local chat sends its short reply to Cartesia Sonic. Full answers stay in chat.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -260,6 +337,9 @@ struct SettingsView: View {
             liveModelDraft = state.settings.liveModel
             speakRepliesDraft = state.settings.speakReplies
             searchGroundingDraft = state.settings.useGoogleSearchForResearch
+            localSettingsDraft = state.settings.local
+            localAPIKeyDraft = state.localAPIKeyInput
+            cartesiaAPIKeyDraft = state.cartesiaAPIKeyInput
             didLoadDrafts = true
         }
         .toolbar {
@@ -272,6 +352,7 @@ struct SettingsView: View {
                         speakReplies: speakRepliesDraft,
                         useGoogleSearchForResearch: searchGroundingDraft
                     )
+                    state.saveLocalSettings(localSettingsDraft, apiKey: localAPIKeyDraft, cartesiaAPIKey: cartesiaAPIKeyDraft)
                 }
             }
         }
@@ -288,6 +369,17 @@ struct SettingsView: View {
                 systemImage: granted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
             )
             .foregroundStyle(granted ? .green : .orange)
+        }
+    }
+
+    private func endpointField(_ title: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            TextField(title, text: text)
+                .textFieldStyle(.roundedBorder)
+                .font(.callout.monospaced())
         }
     }
 

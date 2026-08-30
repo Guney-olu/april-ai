@@ -83,6 +83,24 @@ enum Prompts {
         """
     }
 
+    static func localChat(userPrompt: String, references: [ContextReference], memories: [MemorySearchResult]) -> String {
+        """
+        User request:
+        \(userPrompt)
+
+        Relevant approved memories:
+        \(memories.prefix(6).map { result in
+            let item = result.item
+            return "- Type: \(item.type.rawValue), confidence: \(String(format: "%.2f", item.confidence)), source: \(item.source)\n  Memory: \(item.content)"
+        }.joined(separator: "\n"))
+
+        Local context references:
+        \(references.map { "- Source: \($0.source)\n  Snippet: \($0.snippet)" }.joined(separator: "\n"))
+
+        Use memories as fallible hints. Cite a relevant memory or local source naturally when it materially helped. Reply directly in Markdown. Do not produce JSON, an XML wrapper, or a meta-description of this prompt.
+        """
+    }
+
     static func sessionMemoryReview(transcript: String) -> String {
         """
         Review this session transcript and draft durable memory candidates for a personal AI assistant.

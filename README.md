@@ -42,7 +42,16 @@ Use `swift run` only for development/debugging. It launches a raw executable, no
 5. Open the **Context** tab.
 6. Drop PDFs, Markdown, text files, notes, logs, or code into `context/inbox`.
 7. Click **Index inbox**.
-8. Optional: grant Microphone, Screen Recording, and Accessibility permissions if you want voice, screenshot/screen-share, or local-control tools.
+8. Optional: grant Microphone, Speech Recognition, Screen Recording, and Accessibility permissions if you want voice, screenshot/screen-share, or local-control tools.
+
+### Local Mode Setup
+
+The **Local** tab does not need a Gemini key. Start your local services, then open **Settings → Local Model** and keep or change these defaults:
+
+- Unsloth chat server: `http://127.0.0.1:8888/v1`
+- Cartesia Sonic text-to-speech: `sonic-3.6` with a configurable voice ID
+
+Add the Unsloth token and Cartesia API key, save, then use **Test Local Services**. Local voice is intentionally turn-based: macOS Speech Recognition transcribes a recorded thought, Unsloth streams the response, and Cartesia Sonic speaks its short version. There is no hidden Gemini fallback or local TTS/transcription server.
 
 If macOS does not focus the API key field when running from `swift run`, use **Paste Clipboard** or **Enter in Dialog** in Settings. You can also launch with an environment key:
 
@@ -71,6 +80,8 @@ You can choose another folder from the **Context** or **Settings** screen.
 - **Local-control tools**: optional Accessibility tools can open apps, use native UI actions, run safe shortcuts, type, and move the mouse when you explicitly ask.
 - **Conversational Computer Use autopilot**: Live chat can run a bounded Gemini Computer Use loop for visual UI workflows and form filling. April now reports progress while it works, instead of going dead-silent like a toaster with anxiety.
 - **Cheap by default**: normal chat uses fast Gemini models. Heavy sandbox agents are there for work that actually needs compute, browsing, or files.
+- **Fully local chat path**: switch to **Local** for an Unsloth-hosted OpenAI-compatible model with its server-side web search, Python, and terminal tools enabled. It shares April's context and approved-memory system, but never receives macOS-control capabilities.
+- **Low-overhead local voice turns**: macOS Speech Recognition transcribes recorded input and Cartesia Sonic speaks the short reply, so Local mode needs no Whisper or local TTS server.
 - **Local-first project data**: context, memory, research outputs, indexes, and logs live in your chosen `context/` folder.
 
 ## Memory Architecture
@@ -135,6 +146,7 @@ The Swift package target is organized by domain under `Sources/AprilAI/`:
 - `App/`: app entry point, shared state, and common models.
 - `UI/`: SwiftUI views and text-input helpers.
 - `Gemini/`: Gemini REST client, Live session, prompts, speech, voice recording, screen capture, and Live tool execution.
+- `Local/`: OpenAI-compatible Unsloth chat streaming, macOS Speech transcription, and Cartesia Sonic speech clients.
 - `Context/`: local context folder handling and SQLite indexing.
 - `Memory/`: durable memory storage.
 - `Control/`: Accessibility, keyboard, mouse, app-control, and grid-overlay helpers.
@@ -150,6 +162,7 @@ GitHub Actions runs offline smoke checks on pushes and pull requests to `main`:
 - `swift scripts/smoke-shortcuts.swift`
 - `swift scripts/smoke-coordinate-mapping.swift`
 - `swift scripts/smoke-memory-brain.swift`
+- `swift scripts/smoke-local-mode.swift`
 - `swiftc -parse scripts/smoke-live.swift`
 
 The Live smoke script is parse-checked in CI instead of opening a real Gemini socket, so public contributors do not need secrets just to verify the project.

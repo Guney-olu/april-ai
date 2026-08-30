@@ -179,7 +179,7 @@ struct MessageBubble: View {
     private var title: String {
         switch message.role {
         case .user: "You"
-        case .assistant: "April AI"
+        case .assistant: message.provider == .local ? "April AI Local" : "April AI"
         case .system: "System"
         }
     }
@@ -194,7 +194,7 @@ struct MessageBubble: View {
 
     private var icon: String {
         switch message.role {
-        case .assistant: "sparkles"
+        case .assistant: message.provider == .local ? "cpu" : "sparkles"
         case .user: "person.crop.circle"
         case .system: "gearshape"
         }
